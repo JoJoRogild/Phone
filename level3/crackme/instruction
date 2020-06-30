@@ -1,0 +1,51 @@
+If we input a long string in the programm, we get a segfault. We could abuse a buffer overflow to change the code flow. And thats
+actually the only way becaue this program does not check or compare the supplied string. First function is called f. This function only
+executes scanf and the function __f_func only prints `Ooop!! Try again` message. 
+
+Dump of assembler code for function f:
+   0x080491d8 <+0>:	push   ebp
+   0x080491d9 <+1>:	mov    ebp,esp
+   0x080491db <+3>:	push   ebx
+   0x080491dc <+4>:	sub    esp,0x24
+   0x080491df <+7>:	call   0x80490c0 <__x86.get_pc_thunk.bx>
+   0x080491e4 <+12>:	add    ebx,0x2e1c
+   0x080491ea <+18>:	sub    esp,0xc
+   0x080491ed <+21>:	lea    eax,[ebx-0x1fde]
+   0x080491f3 <+27>:	push   eax
+   0x080491f4 <+28>:	call   0x8049030 <printf@plt>
+   0x080491f9 <+33>:	add    esp,0x10
+   0x080491fc <+36>:	sub    esp,0x8
+   0x080491ff <+39>:	lea    eax,[ebp-0x28]
+   0x08049202 <+42>:	push   eax
+   0x08049203 <+43>:	lea    eax,[ebx-0x1fca]
+   0x08049209 <+49>:	push   eax
+   0x0804920a <+50>:	call   0x8049060 <__isoc99_scanf@plt>
+   0x0804920f <+55>:	add    esp,0x10
+   0x08049212 <+58>:	nop
+   0x08049213 <+59>:	mov    ebx,DWORD PTR [ebp-0x4]
+   0x08049216 <+62>:	leave  
+   0x08049217 <+63>:	ret    
+End of assembler dump.
+
+Dump of assembler code for function __f_func:
+   0x080491ad <+0>:	push   ebp
+   0x080491ae <+1>:	mov    ebp,esp
+   0x080491b0 <+3>:	push   ebx
+   0x080491b1 <+4>:	sub    esp,0x4
+   0x080491b4 <+7>:	call   0x8049239 <__x86.get_pc_thunk.ax>
+   0x080491b9 <+12>:	add    eax,0x2e47
+   0x080491be <+17>:	sub    esp,0xc
+   0x080491c1 <+20>:	lea    edx,[eax-0x1fef]
+   0x080491c7 <+26>:	push   edx
+   0x080491c8 <+27>:	mov    ebx,eax
+   0x080491ca <+29>:	call   0x8049040 <puts@plt>
+   0x080491cf <+34>:	add    esp,0x10
+   0x080491d2 <+37>:	nop
+   0x080491d3 <+38>:	mov    ebx,DWORD PTR [ebp-0x4]
+   0x080491d6 <+41>:	leave  
+   0x080491d7 <+42>:	ret    
+End of assembler dump.
+
+With `objdump -D` you can see all of the available functions. Have you noticed the function __s_func? Thats the function we want to jump to through a buffer overflow. But first we need the offset. Type `AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHHIIIIJJJJKKKKLLLLMMMMNNNNOOOOPPPP` and see where its crashing. It crashes at 0x4c4c4c4c which is LLLL in decimal. So we have the offset 44, because there are 44 characters before LLLL. Now we need the address of the function __s_func. We can get that with `objdump -D ./crackme | grep __s_func`. Now we have erverything we need! If you print the offset with the __s_func address and pipe int the program, we can jump to __s_func. Now we can change the code flow to __s_func
+You can do it like this: `python -c 'print "A"*44 + "<__s_func address>"' | ./crackme` Now we get the `Great !!` message. That was fun!
+

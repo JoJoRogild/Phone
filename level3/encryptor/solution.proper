@@ -1,0 +1,48 @@
+So the method this challenge is pretty easy but you could also try to overcomplicate it
+there are 2 main routes:
+        the easy way: playing with the input
+        the hard (but fun) way: openning it up in a disaassembler
+I went the easy way becuase I am too lazy
+the key: arln_pra_dfgafcchsrb_l{ieeye_ea}
+is 32 charecters long
+and if we try to type in some charecters like ABCDEFGHIJKLMNOPQRSTUVWXYZ
+we get CFILORUXADGJMPSVYBEHKNQTWZ
+which tells us that this is a shift cipher
+now becuase the key is 32 charecters long lets try giving it 32 charecters
+I passed it 0123456789ABCDEFGHIJKLMNOPQRSTUV as an argument and got:
+258BEHKNQT0369CFILORU147ADGJMPSV
+Now we can try figuring out where each letter is shifted by hand but that is too much work instead we can write a small pythonscript that gives
+us the indexes
+encrptedString="2 5 8 B E H K N Q T 0 3 6 9 C F I L O R U 1 4 7 A D G J M P S V".split()
+string="0123456789ABCDEFGHIJKLMNOPQRSTUV"
+argument and got:
+258BEHKNQT0369CFILORU147ADGJMPSV
+Now we can try figuring out where each letter is shifted by hand but that is too much work instead we can write a small python script that gives
+us the indexes
+encryptedString="2 5 8 B E H K N Q T 0 3 6 9 C F I L O R U 1 4 7 A D G J M P S V".split()
+string="0123456789ABCDEFGHIJKLMNOPQRSTUV"
+for i in string:
+        print(i , "is" , "in" , encryptedString.index(i))
+we should get something that begins with:
+0 is in 10
+1 is in 21
+2 is in 0
+3 is in 11
+4 is in 22
+5 is in 1
+6 is in 12
+7 is in 23
+now we found out where where each charecter is shifted to
+we can now just write a C program that decrypt the message
+int main () {
+        const char encryptedArray[] = "arln_pra_dfgafcchsrb_l{ieeye_ea}";
+        const int index[] = {10,21,0,11,22,1,12,23,2,13,24,3,14,25,4,15,26,5,16,27,6,17,28,7,18,29,8,19,30,9,20,31}; //the positions
+        char string[32];
+        int i;
+        for (i = 0; i <= 31; ++i){
+                string[i] = encryptedArray[index[i]];
+  }
+        string[i] = '\0';
+        printf("%s\n", string);
+}
+

@@ -1,0 +1,125 @@
+﻿
+    • 
+
+
+
+5000/5000
+Character limit: 5000
+______________________________________________
+[]
+[WRITE UP FROM CRACKME "c1_keygenme1" from c1]
+[]
+[By S01den]
+[]
+[S01den@protonmail.com]
+[_________________________________ 03/17/2019 ___]
+
+
+Hi, dear budding budding.
+Today we are going to solve a keygen-me, the c1_keygenme1 of c1 (https://crackmes.one/crackme/5c2335c033c5d41e58e00625)
+
+---------------------------------------------------------- -------------------------------------
+Author:
+c1
+
+Language:
+C / C ++
+
+Upload:
+8:03 AM 12/26/2018
+
+Level:
+2 // It is a crackme classified among the easy ones; However, I would have set the difficulty to 3
+
+Platform
+Unix / linux etc.
+
+Description
+
+A easy keygenme, patching not allowed. Have fun!
+---------------------------------------------------------- -------------------------------------
+
+THE WOMAN TO READ? THE KEYGEN SOURCE CODE IS IN THE ARCHIVE ...
+
+Curious? READ MORE
+
+Above all, as usual, we are going to start music to warm up [https://www.youtube.com/watch?v=n1JiNg3XHxA (RIP Keith Flint)]
+
+Its good ? GOOOOOOOOOOOO!
+
+So we open with radare2 and we disassemble:
+
+____________________________________________________________________________________________________
+solden @ solden: ~ / crackmes $ r2 keygenme1
+[0x000010e0]> ie
+[Entrypoints]
+vaddr = 0x000010e0 paddr = 0x000010e0 baddr = 0x00000000 laddr = 0x00000000 haddr = 0x00000018 type = program
+
+1 entrypoints
+
+[0x000010e0]> pd 500 @ 0x10e0
+_____________________________________________________________________________________________________
+
+Shortly after the second call to fgets (when the program recovers the license key) we see a "call 0x1371".
+In this routine we can observe a call to strrchr with as argument the license key and a '-'; then a strtoul.
+"The strrchr () function returns a pointer to the last occurrence of the character c in the string s."
+
+---------------------------------------------------------- -------------------------------------
+0x00001386 6a2d push 0x2d; '-'; 45
+0x00001388 ff7508 push dword [ebp + 8]
+0x0000138b e820fdffff call sym.imp.strrchr
+---------------------------------------------------------- -------------------------------------
+
+Ok so it's used to split the license key into two parts, separated by a dash.
+If there is no dash, you eat an "Invalid license key or username".
+The second part of the license key part and then converted to unsigned long thanks to strtoul.
+
+Upon returning from the routine, we see
+
+---------------------------------------------------------- -------------------------------------
+call sym.imp.strlen
+0x0000150b 83c410 add esp, 0x10
+0x0000150e 8945e4 mov dword [ebp - 0x1c], eax
+0x00001511 837de840 cmp dword [ebp - 0x18], 0x40; [0x40: 4] = 52; '@'; 64
+0x00001515 0f853c010000 jne 0x1657
+---------------------------------------------------------- -------------------------------------
+
+When debugging, we see that it is the first part of the license key which is sent to strlen.
+We see that the first part of the pass must be 64 characters, otherwise we take the error message.
+
+Then, until 0x00001591, we have various operations allowing to convert the first part of our pass
+in number (example: with "0100111" we have 0x0100111)
+
+From there, we come across a routine that takes the username as an argument and outputs an unsigned long.
+Here is the interesting part of the routine:
+
+: | 0x00001244 c1e808 shr eax, 8
+: | 0x00001247 89c3 mov ebx, eax
+: | 0x00001249 8b4df0 mov ecx, dword [ebp - 0x10]
+: | 0x0000124c 8b45f4 mov eax, dword [ebp - 0xc]
+: | 0x0000124f 01c8 add eax, ecx
+: | 0x00001251 0fb600 movzx eax, byte [eax]
+: | 0x00001254 0fb6c0 movzx eax, al
+: | 0x00001257 3345f8 xor eax, dword [ebp - 8]
+: | 0x0000125a 0fb6c0 movzx eax, al
+: | 0x0000125d 8b848260e5ff. mov eax, dword [edx + eax * 4 - 0x1aa0]
+: | 0x00001264 31d8 xor eax, ebx
+: | 0x00001266 8945f8 mov dword [ebp - 8], eax
+: | 0x00001269 8345f401 add dword [ebp - 0xc], 1
+: `-> 0x0000126d 8b45f4 mov eax, dword [ebp - 0xc]
+: 0x00001270 3b450c cmp eax, dword [ebp + 0xc]; [0xc: 4] = 0; 12
+`== <0x00001273 72cc jb 0x1241
+0x00001275 8b45f8 mov eax, dword [ebp - 8]
+0x00001278 f7d0 not eax
+
+eax is worth 0xffffffff first, then the result of each loop lap
+
+the line "0x0000125d mov eax, dword [ed
+Send feedback
+
+History
+
+Saved
+
+Community
+

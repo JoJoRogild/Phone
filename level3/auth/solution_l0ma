@@ -1,0 +1,24 @@
+For resolving this crackme we have to use the stack buffer overflow exploit by redirecting the program execution.
+
+In this program we can find 3 important functions:
+-main
+-auth
+-authenticated (here we can find the "Right password" string)
+
+Plus a 4th function called normal where inside we'll find the "Wrong password" string.
+
+When we enter the main function it asks for our name through a fgets function and for our password, this time thorugh the "auth" function.
+Here the program allocates 64 bytes of memory to the local_8h variable and then it stores in it the address of the normal function by doing:
+
+mov rax, qword [local_8h]
+lea rdx, qword [sym.normal]
+mov qword [rax + 0x68], rdx	-> local_8h + 104
+
+What we want to do then is to overwrite the address that has been inserted inside the variable and change it with the authenticated function's address.
+We can do so when we're asked for the password,which is still stored inside the local_8h function.
+We just need to write 104 chars of whatever and then the address of the authenticated function.
+After this the program saves the content of the local_8h variable inside the rax register, and next it saves the content of rax + 104 inside the rdx register.
+As a result we'll find the new address inside the rdx register insted of the normal function's one.
+After all of this we just need to wait until the end of the auth function where an instruction calls the rdx register, which by doing so it'll redirect the execution of the prgram to the correct address and we'll receive the "Right password" string.
+If we don't insert enough chars we'll get the "Wrong password" string but if we insert the wrong address a stack overflow error will occur.
+

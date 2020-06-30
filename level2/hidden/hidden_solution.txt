@@ -1,0 +1,18 @@
+opened in Hopper . 
+
+The secret function is outside of the main: 
+
+it does not get executed . so the solution is changing the execution to the address of the secret function.
+in Hopper I tried to add assembly instructions to jump to it. surprise it did not work .
+so I used GDB  and jumped there lol 
+
+gdb hidden 
+
+(gdb) jump secret
+Continuing at 0x555555555149.
+flag{3sc0nd1d0_3h_M41s_G0st0S0}
+
+the flag is :  flag{3sc0nd1d0_3h_M41s_G0st0S0}
+
+for once using gdb in terminal saved me . 
+
