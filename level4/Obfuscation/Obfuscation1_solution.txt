@@ -1,0 +1,274 @@
+Obviously, the vast majority of instructions in this binary are meaningless, meant only to obscure the real instructions. On the other hand, we know that there must be actual meaningful comparisons made within the program, because it checks if the supplied password is valid. Thus a reasonable first step is to search the binary for comparisons:
+
+> objdump -M intel -d Obfuscation1 | egrep 'cmp'
+
+ 8048385:	3d 20 c0 0b 08       	cmp    eax,0x80bc020
+ 8048400:	80 3d 20 c0 0b 08 00 	cmp    BYTE PTR ds:0x80bc020,0x0
+ 8048463:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 8048d44:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 804c401:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 804f31e:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 8056669:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 8058ec3:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 8060a4d:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 806207c:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 80627af:	83 f8 4a             	cmp    eax,0x4a
+ 80627be:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 80627d9:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 8062cf6:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 806456c:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 80660ec:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 80694e0:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 806d519:	39 c1                	cmp    ecx,eax
+ 8071756:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 80777a5:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 807eae8:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 80810bd:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 80815cd:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 8086729:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 808952a:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 808a165:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 808c9a5:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 8093577:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 8093f4f:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 809765d:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 8097b2d:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 8097f5f:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 8098292:	39 d1                	cmp    ecx,edx
+ 8098b1d:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 809d6d3:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 809e228:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 809ea26:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 809ef85:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 809feb0:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 80a1573:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 80a366a:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 80a732b:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 80aa990:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 80ab62f:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 80af529:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 80af544:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 80b34be:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 80b9af2:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 80ba265:	83 f8 00             	cmp    eax,0x0
+ 80ba2d7:	3d ff 0f 00 00       	cmp    eax,0xfff
+ 80ba2e5:	83 7d 08 02          	cmp    DWORD PTR [ebp+0x8],0x2
+ 80ba391:	39 fe                	cmp    esi,edi
+
+Most of these comparisons are themselves meaningless, but it's easy to filter them out:
+
+> objdump -M intel -d Obfuscation1 | egrep 'cmp' | egrep -v 'fff'
+
+ 8048385:	3d 20 c0 0b 08       	cmp    eax,0x80bc020
+ 8048400:	80 3d 20 c0 0b 08 00 	cmp    BYTE PTR ds:0x80bc020,0x0
+ 80627af:	83 f8 4a             	cmp    eax,0x4a
+ 806d519:	39 c1                	cmp    ecx,eax
+ 8098292:	39 d1                	cmp    ecx,edx
+ 80ba265:	83 f8 00             	cmp    eax,0x0
+ 80ba2e5:	83 7d 08 02          	cmp    DWORD PTR [ebp+0x8],0x2
+ 80ba391:	39 fe                	cmp    esi,edi
+
+This gives us a very small list of instructions where we can break the program to figure out what it's doing. The first one of interest is the comparison at 0x80627af.
+
+===== The comparison at 0x80627af =====
+
+We open the binary in gdb, then set a breakpoint at 0x80627af. Since this comparison is checking the value in the register eax, we will also tell gdb to display the value of eax:
+
+> gdb Obfuscation1
+(gdb) break *0x80627af
+(gdb) display/x $eax
+
+Now we can run the program with several different passwords and see how the value of eax depends on the password we give:
+
+---
+Trial 1: "password"
+---
+
+(gdb) run password
+Breakpoint 1, 0x80627af in ?? ()
+1: /x $eax = 0x3c
+
+---
+Trial 2: "P@55w0rd"
+---
+
+(gdb) run P@55w0rd
+Breakpoint 1, 0x80627af in ?? ()
+1: /x $eax = 0x3c
+
+---
+Trial 3: "A"
+---
+
+(gdb) run A
+Breakpoint 1, 0x80627af in ?? ()
+1: /x $eax = 0xb
+
+
+The value of eax was the same for "password" and "P@55w0rd" but different for "A", so we can hypothesize that the value of eax depends on the length of the supplied password. To test this, we run the program with passwords of different lengths, and look for a pattern.
+
+---
+Trial 4: "AA"
+---
+
+(gdb) run AA
+Breakpoint 1, 0x80627af in ?? ()
+1: /x $eax = 0x12
+
+--- 
+Trial 5: "AAA"
+---
+
+(gdb) run AAA
+Breakpoint 1, 0x80627af in ?? ()
+1: /x $eax = 0x19
+
+
+At this point we should be able to see the pattern: the value of eax appears to be given by the formula eax = 4 + 7*length(password). The comparison checks if eax is equal to 0x4a = 74, or in other words, the comparison checks if the password has length 10. To check this hypothesis, we can run another trial where the suppled password has length 10:
+
+---
+Trial 6
+---
+
+(gdb) run AAAAAAAAAA
+Breakpoint 1, 0x80627af in ?? ()
+1: /x $eax = 0x4a
+
+
+CONCLUSION: This comparison checks to make sure the password we give has length 10.
+
+The next comparison of interest is the one at 0x806d519.
+
+
+===== The comparison at 0x806d519 =====
+
+We now set a new breakpoint at 0x806d519 and tell gdb to display the contents of ecx:
+
+(gdb) delete 1
+(gdb) break *0x806d519
+(gdb) display/x $ecx
+
+Running the program with a password of length 10, we now get the following:
+
+(gdb) run AAAAAAAAAA
+Breakpoint 2, 0x806d519 in ?? ()
+1: /x $eax = 0xa
+2: /x $ecx = 0x0
+
+Not too much information here... Continuing:
+
+(gdb) continue
+Breakpoint 2, 0x806d519 in ?? ()
+1: /x $eax = 0xa
+2: /x $ecx = 0x1
+
+Now things seem clearer: ecx appears to be a counter, going from 0 to 10. Continuing again to verify this guess:
+
+(gdb) continue
+Breakpoint 2, 0x806d519 in ?? ()
+1: /x $eax = 0xa
+2: /x $ecx = 0x2
+
+If you repeat this several more times, you will see ecx does increment until it reaches 0xa = 10, and then the program will terminate (unsuccessfully) upon the next continue.
+
+
+CONCLUSION: the program is running through a loop with 10 iterations, and this comparison is to tell the program when the loop is finished.
+
+The next comparison of interest is the one at 0x8098292.
+
+
+===== The comparison at 0x8098292 =====
+
+We now add a new breakpoint at 0x8098292 and display the contents of the register edx:
+
+(gdb) delete 2
+(gdb) break *0x8098292
+(gdb) display/x $edx
+
+Running this with passwords of length 10:
+
+(gdb) run AAAAAAAAAA
+Breakpoint 3, 0x8098292 in ?? ()
+1: /x $eax = 0x1f3
+2: /x $ecx = 0xf3
+3: /x $edx = 0xdf
+
+Not too much information here. Continuing...
+
+(gdb) continue
+Breakpoint 3, 0x8098292 in ?? ()
+1: /x $eax = 0x1f3
+2: /x $ecx = 0xf3
+3: /x $edx = 0xf0
+
+Still not much information...
+
+(gdb) continue
+Breakpoint 3, 0x8098292 in ?? ()
+1: /x $eax = 0x1f3
+2: /x $ecx = 0xf3
+3: /x $edx = 0xf3
+
+Still not much information...
+
+(gdb) continue
+Breakpoint 3, 0x8098292 in ?? ()
+1: /x $eax = 0x1f3
+2: /x $ecx = 0xf3
+3: /x $edx = 0xff
+
+Continuing this until the program ends, we will hit our breakpoint a total of 10 times, with the following values after each iteration:
+
+Iteration:  1  2  3  4  5  6  7  8  9  a
+      ecx: f3 f3 f3 f3 f3 f3 f3 f3 f3 f3
+      edx: df f0 f3 ff df d3 c1 b6 c7 c0
+
+
+We can now try again with other passwords, to see what happens:
+
+---
+Trial 2: ABABABABAB
+---
+
+Iteration:  1  2  3  4  5  6  7  8  9  a
+      ecx: f3 f0 f3 f0 f3 f0 f3 f0 f3 f0
+      edx: df f0 f3 ff df d3 c1 b6 c7 c0
+
+We notice straightaway that the edx values did not change at all, while the ecx values now alternate, just as our password did. This gives us a working hypothesis: the ecx values are some encoding of the characters in our password. Each iteration of the loop checks a character in the password with a fixed reference character (in edx). The only question at this point is: what is the encoding of letters to bytes being used? We have already figured out at A = 0xf3 and B = 0xf0. We can run the program with other passwords to figure out the encodings for other characters:
+
+
+    12      0   02      @   f2      P   e2      `   d2      p   c2      
+!   13      1   03      A   f3      Q   e3      a   d3      q   c3      
+"   10      2   00      B   f0      R   e0      b   d0      r   c0      
+#   11      3   01      C   f1      S   e1      c   d1      s   c1      
+$   06      4   f6      D   e6      T   d6      d   c6      t   b6      
+%   07      5   f7      E   e7      U   d7      e   c7      u   b7      
+&   04      6   f4      F   e4      V   d4      f   c4      v   b4      
+'   05      7   f5      G   e5      W   d5      g   c5      w   b5      
+(   0a      8   fa      H   ea      X   da      h   ca      x   ba      
+)   0b      9   fb      I   eb      Y   db      i   cb      y   bb      
+*   08      :   f8      J   e8      Z   d8      j   c8      z   b8      
++   09      ;   f9      K   e9      [   d9      k   c9      {   b9      
+,   fe      <   ee      L   de      \   ce      l   be      |   ae      
+-   ff      =   ef      M   df      ]   cf      m   bf      }   af      
+.   fc      >   ec      N   dc      ^   cc      n   bc      ~   ac      
+/   fd      ?   ed      O   dd      _   cd      o   bd           
+
+
+The bytes stored in edx can be decoded into characters using the above table:
+
+df f0 f3 ff df d3 c1 b6 c7 c0
+M  B  A  -  M  a  s  t  e  r
+
+Running the program with this as our password gives:
+
+> ./Obfuscation1 MBA-Master
+well done
+
+
+
+
+========================
+  SOLUTION: MBA-Master
+========================
+

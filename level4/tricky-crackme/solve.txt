@@ -1,0 +1,63 @@
+This is a Linux crackme. It involves several anti-debugging and anti-analysis skills, which are mentioned as we progress. 
+
+The crackme has two stages. The first stage is the executable tricky-crackme itself. The first obstacle is some of the strings in the program are encrypted so we cannot easily understand what it is doing. There are two ways to deal with such obfuscations. The first way is to analyze the encryption and write a small script to decrypt it. This is suitable if the executable is quite large and we have to deal with thousands of strings. The second way is to debug the program and let the program decrypt the strings for us. In this solution we take the second approach. 
+
+At basic block 0xaf6, the program starts to prepare a string and it is decrypted by sub_0xe40. The decrypted string is "USER". The program then gets the environment variables and finds the value of "USER". This effectively gets the current user name of the system. At the same time, the program converts the user input into a integer (base 10) and considers it as a key. Sub_0x10f0 checks whether the name-key combination is valid. 
+
+The core algorithm is at 0x1168. The algorithm is quite straightforward:
+
+name = 'jeff'
+val = 0
+for i, c in enumerate(name):
+    val += ord(c)
+    val ^= i
+    val ^= 0xf
+
+My user name is 'jeff' and the correct key is 385. When I run the crackme with 385 as the key, it prompts me for another password. This is the second stage. 
+
+We can find that after we pass the first stage check, at 0xc52 the program loads another ELF and calls fexecve to execute it. The ELF is 0x2008 bytes in size and we can dump it to the disk. If we run it directly, it also prompts for the password. So we now shift our analysis focus to this dumped-elf. 
+
+The ELF has many fields in its header wiped or altered so BinaryNinja cannot deal with it. We need to first fix the headers to allow it to be loaded into Binja. For example, we need to fix the endianess (EI_DATA), etc. After we make the static analyzers happy, we find all the import functions are not named, which make the analysis difficult. Worse still, all the section information are wiped. It is noteworthy that segments are critical to the ELF execution and sections are not vital. However, if we do not have the section information we do not have access do many information we used to have. We have to study how Linux handles dynamic loading and resolve these names by ourself. 
+
+Indeed, we can see the names at 0x510 in the binary. The .dynsym section is immediately before them. The .dynsym section starts at 0x2c0 and it contains 24 Elf64_Sym structure. At 0x788, there is the the .rela.plt section and we have 15 Elf64_Rela structures here. Combining these two sources of information, we can now resolve the imports by ourself. 
+
+Starting from 0x00201f60, the GOTs entries are (in this order) free, puts, __stack_chk_fail, fputs, srand, fgets, time, malloc, fflush, ptrace, __printf_chk, perror, exit, rand, __ctype_b_loc. The GOT at 0x201fe0 is __libc_start_main.
+
+We now know the 0xa50 is at 0xa80 and we can manually define it. This program only allows digits as legal chars and the core logic is at sub_0x1130. 
+
+It is not immediately what this progam does, so we need to debug it. Note there is an anti-debug routine at 0xa16. Basically it calls ptrace(), and if the program is already being debugged, the call fails. Simple patch the conditional jump at 0xa37 to make it never jump. 
+
+Now we can deubg it with GDB. However, since the import functions are not resolved in the conventional way, GDB fails to break the program at entry point. I come up with a novel way to deal with it. Notice near the beginning of main(), at 0xa51 there is a two-byte "xor edi, edi" insruction. We patch it to "int 3; nop". This time when we run the program under GDB, it will break at 0xa51. Then we manually enforce the "xor edi, edi" by typing "set $edi = 0", and we are ready to go! We now know the base address of the module and we can set other breakpoints at the locations we are interested in. 
+
+With thhe help of a debugger, it is easy to follow the logic of the program. The input length must be even and cannot be longer than 0x10. It treats every two chars as a group and use 4 * char1 + char2 as in index. Note both chars are digits and the program enforces that the first char can only be one of the "012" and the second can only be one of the "0123".  This limits the index to the range of 0 - 11. 
+
+The progarm uses this index to get a char from the string "G0B04JD\x00NP " and concatenate all the chars. Then it prints the obtained string. So it seems the goal is to print a "G00D J0B". 
+
+The input we need is:
+
+G00D J0B
+index   digits
+0       00
+1       01
+1       01
+6       12
+10      22
+5       11
+1       01
+2       02
+
+And the password is:
+
+0001011222110102
+
+An example run it shown as follows:
+
+./tricky-crackme 385
+[+] Welcome to this tricky crackme.
+[+] Find the correct password to unlock the next step.
+[+] I'm waiting for solutions...
+[+] Have fun.
+[+] Developed by Binary Newbie
+
+Enter the password: 0001011222110102
+G00D J0B

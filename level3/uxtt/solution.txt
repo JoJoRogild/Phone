@@ -1,0 +1,71 @@
+crackme: protexec's uxtt
+	 http://www.crackmes.de/users/protexec
+
+tools: ald   - ald.sourceforge.net
+       ht    - hte.sourcedorge.net
+
+
+--
+$ ./uxtt
+Segmentation fault
+$
+
+oops... trying to inspect the file with objdump or readelf will fail
+too as the section headers have been corrupted. 
+
+0010 e_type      00000002
+0012 e_machine   00000003
+0014 e_version   000F00F0 <<< 00000001
+0018 e_entry     080482C2
+001C e_phoff     00000034
+0020 e_shoff     FEAAEEFF
+0024 e_flags     FFFF00F0
+0028 e_ehsize    0000FFFF
+002A e_phentsize 00000020
+002C e_phnum     00000007
+002E e_shentsize 0000FF00
+0030 e_shnum     0000FFFF
+0032 e_shstrndx  0000FEFE
+
+even ald wont load the file as it doesnt like the e_version. however
+patching e_version back to 1 (EV_CURRENT) fixes that, and the crackme
+can be debugged. as theres just a main function, its very easy to
+figure out whats going on. first we have some buffer @08049620 (from
+now crypted_sc) that gets xored with some value from the
+commandline (actually atoi(argv[3])). the result is stored in plain_sc
+@08049680. then the return addr of the main function is replaced by
+the addr of plain_sc, so that if main returns we jump to the plain_sc
+buffer. this explains why the crackme simply segfaults when run
+without the proper arguments: its trying to execute crypted (=garbage)
+instructions.
+
+now as the key is just 1 byte in length (well actually only the lowest
+byte gets used, so theres actually 2^24 possible working keys), we could just
+try all 0x100 values and wait for the shell to show up, but theres a
+little shortcut:
+
+looking at the crypted bytes:
+0000  9a 6e 2f f8 07 79 40 b1  f9 37 76 f8 37 7d c1 7a  |.n/ø.y@±ù7vø7}Áz|
+0010  f8 82 fc 3f 79 fc 27 7d  bc f1 40 aa f8 a9 31 bc  |ø.ü?yü'}¼ñ@ªø©1¼|
+0020  f1 99 ad 8e 8e 8e 5e 13  18 1f 5e 02 19           |ñ.­...^...^..|
+                        ^^ ..  .. .. ^^ .. ..
+
+and remembering that the common shell path is "/bin/sh":
+
+5e ^ '/' = 71
+13 ^ 'b' = 71
+18 ^ 'i' = 71
+1f ^ 'n' = 71
+5e ^ '/' = 71
+02 ^ 's' = 71
+19 ^ 'h' = 71
+
+0x71 (113) actually looks like a good candidate for a key:
+
+$ ./uxtt foo bar 113
+sh-3.1$
+
+
+and we spawned a shell...
+
+    crp-

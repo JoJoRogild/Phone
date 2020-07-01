@@ -1,0 +1,452 @@
+As the name suggests, this crackme is centered less around reverse engineering
+and more around solving a mathematics problem. The math problem is more
+complicated than what you usually see in a crackme, but it doesn't involve
+anything very advanced: some elementary arithmetic is all we will use here.
+
+[ NOTE: x0r19x91 mentioned in a comment that the binary will be patched to fix a
+bug that allows for more than one correct password. As of now, the patched
+version hasn't appeared, so this solution applies to the original version. ]
+
+
+
+
+                      ==================================
+                        1. Reversing the main function
+                      ==================================
+
+This crackme lives almost entirely in the main() function, so this is all we
+will have to reverse engineer. Main starts off easily enough: it prints a
+welcome message, asks for a password, and then retrieves a password from the
+user. The password is retrieved using a call to getdelim, so there are no
+inherent restrictions on the length of the password. Nor is there a length check
+later on in the code, so we don't know how long the password should be.
+
+After retrieving the user's password, main uses calloc to create 4 different
+buffers of length 0x200 bytes:
+
+    112c:   push   0x200
+    1131:   push   0x1
+    1133:   call   1090 <calloc@plt>
+    1138:   pop    edi
+    1139:   mov    DWORD PTR [ebp-0x58],eax
+    113c:   pop    eax
+    113d:   push   0x200
+    1142:   push   0x1
+    1144:   call   1090 <calloc@plt>
+    1149:   mov    DWORD PTR [ebp-0x5c],eax
+    114c:   pop    eax
+    114d:   pop    edx
+    114e:   push   0x200
+    1153:   push   0x1
+    1155:   call   1090 <calloc@plt>
+    115a:   pop    ecx
+    115b:   pop    edi
+    115c:   push   0x200
+    1161:   push   0x1
+    1163:   mov    esi,eax
+    1165:   mov    DWORD PTR [ebp-0x60],eax
+    1168:   call   1090 <calloc@plt>
+    116d:   mov    edx,DWORD PTR [ebp-0x5c]
+    1170:   mov    edi,DWORD PTR [ebp-0x58]
+    1173:   mov    DWORD PTR [ebp-0x20],esi
+    1176:   mov    DWORD PTR [ebp-0x64],eax
+    1179:   add    esp,0x10
+    117c:   mov    DWORD PTR [ebp-0x24],eax
+    117f:   mov    eax,DWORD PTR [ebp-0x34]
+    1182:   mov    DWORD PTR [esi],0x1
+    1188:   mov    DWORD PTR [ebp-0x54],eax
+    118b:   movzx  eax,BYTE PTR [eax]
+    118e:   mov    DWORD PTR [edx],0x1
+    1194:   mov    DWORD PTR [ebp-0x2c],edx
+    1197:   mov    DWORD PTR [ebp-0x28],edi
+
+As we will see, these buffers should each be thought of as a single big integer.
+Because calloc produces zeroed memory, the four big integers are initially 0.
+However, the following instructions modify two of the big integers, making them
+equal to 1:
+
+    1182:   mov    DWORD PTR [esi],0x1
+
+    118e:   mov    DWORD PTR [edx],0x1
+
+Therefore, at the end of this block, we have the following memory layout:
+
+    @ ebp-0x20:    pointer to BigInt(1)
+    @ ebp-0x24:    pointer to BigInt(0)
+    @ ebp-0x28:    pointer to BigInt(0)
+    @ ebp-0x2c:    pointer to BigInt(1)
+
+How is it that we know these are actually big integers? Because later on we see
+code for adding two big integers:
+
+    11d0:   mov    eax,DWORD PTR [ebp-0x3c]     # load eax with ptr to a BigInt
+    11d3:   mov    edx,DWORD PTR [ebp-0x40]     # load edx with ptr to a BigInt
+    11d6:   xor    ebx,ebx
+    11d8:   mov    ecx,DWORD PTR [eax+esi*4]    # get a 32-bit chunk of BigInt
+    11db:   mov    eax,DWORD PTR [edx+esi*4]    # get a 32-bit chunk of BigInt
+    11de:   xor    edx,edx
+    11e0:   add    eax,ecx                      # add the chunks together
+    11e2:   adc    edx,ebx                      
+    11e4:   xor    ebx,ebx
+    11e6:   add    eax,edi                      # include previous carry in sum
+    11e8:   adc    edx,ebx
+    11ea:   mov    ebx,DWORD PTR [ebp-0x3c]
+    11ed:   add    esi,0x1
+    11f0:   mov    edi,edx                      # store carry for next chunks
+    11f2:   mov    DWORD PTR [ebx+esi*4-0x4],eax  # store the sum
+    11f6:   cmp    esi,0x80
+    11fc:   jne    11d0                         # repeat for the next chunks
+
+Actually, code like this appears twice within main(), and there isn't much left
+to analyze. Coming up with pseudocode for main is now very simple:
+
+
+##### Pseudocode for main()
+    
+    print welcome message
+    print password prompt
+    read password
+    
+    a = BigInt(1)
+    b = BigInt(0)
+    c = BigInt(0)
+    d = BigInt(1)
+    
+    # Each bit of the password causes arithmetic to be done with the BigInts
+    
+    for ch in password:
+        do:
+            x = ch & 1
+            if x == 0:
+                d += c
+                b += a
+            else:
+                c += d
+                a += b
+            ch >>= 1
+        while (ch != 0)
+    
+    # Check that the final values of the BigInts match some given reference values
+    
+    if (a,b,c,d) == (ref_A, ref_B, ref_C, ref_D):
+        print "Correct"
+    else:
+        print "Incorrect"
+    
+##### end pseudocode for main()
+
+
+The constants ref_A, ref_B, ref_C, and ref_D are sitting in the .data section of
+the binary, and are as follows:
+
+    ref_A = 0x1360c554fd8f1854e088068581813641971
+    ref_B = 0x0567d9219d633c8545008938310657f7de6
+    ref_C = 0x0b6c0f3a5189e6bce5f9c1b08b56079cf90
+    ref_D = 0x032fb0ce324549719a8ae49f0bd02af58f1
+
+Now we just need to find the correct sequence of password bits to produce these
+reference values!
+
+
+
+
+                             =====================
+                               2. Doing the math
+                             =====================
+
+At this point, we've reduced the work down to a cute little math problem. To get
+started with it, let's just focus on the integers a and b to start. Also, let's
+work backwards: instead of starting with a=1, b=0 and working forward to produce 
+a=ref_A, b=ref_B, we will instead start with a=ref_A, b=ref_B and try to work 
+backwards to get a=1, b=0. 
+
+Since we're working backwards, all those additions become subtractions, and
+we're left playing the following game.
+
+    1) Start with a=ref_A and b=ref_B
+    2) Choose to do either a -= b or b -= a
+    3) Repeat step 2 any number of times. Your goal is to reach a=1, b=0.
+
+There are lots of different choices you can make, and even more than one that
+will get you to your goal. On the other hand, there is one *natural* algorithm
+to try: the Euclidean algorithm. Essentially, the idea is to always subtract the 
+smaller number from the larger one, and see where we end up (NOTE: if the two
+numbers are ever equal, so that there isn't a smaller number, a choice will have
+to be made). 
+
+The following script tries out this strategy, for both a,b and c,d.
+
+
+##### FILE: euclidean.py
+
+def euclidean(x, y):
+    choices = ''
+    while x != 0 and y != 0:
+        if x >= y:
+            x -= y
+            choices += '1'
+        else:
+            y -= x
+            choices += '0'
+    return (choices, x, y)
+
+
+ref_A = 0x1360c554fd8f1854e088068581813641971
+ref_B = 0x0567d9219d633c8545008938310657f7de6
+ref_C = 0x0b6c0f3a5189e6bce5f9c1b08b56079cf90
+ref_D = 0x032fb0ce324549719a8ae49f0bd02af58f1
+
+# Try for a and b first
+res = euclidean(ref_A, ref_B)
+print('\nStarting with a = ref_A and b = ref_B')
+print('=====================================')
+print('\nChoices made:\n' + res[0])
+print('\nResult: a = {:d} and b = {:d}\n'.format(res[1], res[2]))
+
+# Try for c and d next
+res = euclidean(ref_C, ref_D)
+print('Starting with c = ref_C and d = ref_D:')
+print('======================================')
+print('\nChoices made\n' + res[0])
+print('\nResult: c = {:d} and d = {:d}'.format(res[1], res[2]))
+
+##### end euclidean.py
+
+
+Running it, we get:
+
+    > python3 euclidean.py
+
+    Starting with a = ref_A and b = ref_B
+    =====================================
+    
+    Choices made:
+    1110100110000110001111000011100101100010101111111011101110010110011111010011
+    1001110111111100111101100110001011010011101001101110111010111000011000111011
+    1111100111110010110100101111111100111101100110100110111011000011000111101001
+    101001110011
+    
+    Result: a = 0 and b = 1
+    
+    Starting with c = ref_C and d = ref_D:
+    ======================================
+    
+    Choices made
+    1110100110000110001111000011100101100010101111111011101110010110011111010011
+    1001110111111100111101100110001011010011101001101110111010111000011000111011
+    1111100111110010110100101111111100111101100110100110111011000011000111101001
+    10100111001
+
+    Result: c = 0 and d = 1
+
+
+This nearly worked perfectly! The choices made for both a,b and c,d are
+identical except at the very end: the choices for a,b have an extra '1' at the
+end compared to the choices for c,d. Also, we didn't get the desired result for 
+a,b: we got a=0, b=1 instead of a=1, b=0. This suggests that we should tweak the
+last few choices in such a way that (1) we have the same choices for both a,b
+and c,d, and (2) we get the desired results a=1, b=0 and c=0, d=1. But this is
+trivial! All we have to do is change the last choice for a,b to a '0' instead of
+'1'. Thus a correct sequence of choices is:
+
+    1110100110000110001111000011100101100010101111111011101110010110011111010011
+    1001110111111100111101100110001011010011101001101110111010111000011000111011
+    1111100111110010110100101111111100111101100110100110111011000011000111101001
+    101001110010
+
+Don't forget, we were working backwards to get this. When working forwards, the
+sequence is reversed:
+
+    0100111001011001011110001100001101110110010110011011110011111111010010110100
+    1111100111111101110001100001110101110111011001011100101101000110011011110011
+    1111101110011100101111100110100111011101111111010100011010011100001111000110
+    000110010111
+
+
+
+
+                         ===========================
+                           3. Getting the password
+                         ===========================
+
+We now know the bits that make up our password. There are 240 of them, and we
+just need to divide them up amongst our password characters. Unfortunately, the
+bug that x0r19x91 refers to makes it so that there is more than one correct way
+to do this. What is the bug? Back in the pseudocode for main, our inner do-while
+loop stops as soon as ch == 0; thus the number of iterations may not be the same 
+for each character! For example, if we have ch == '0', there will only be 6
+iterations of the loop, while if we have ch == 'a', then there will be 7 
+iterations of the loop. Since the number of iterations is the same as the number
+of bits we take per character, it is suddenly very unclear how to divide up our
+bits!
+
+What do we know, though? If we're working the printable ascii range, then there
+can be at MOST 7 bits taken per character, since the high bit of an printable
+character is always 0. Similarly, there must be at LEAST 6 bits per character,
+since all printable characters have either their 6th or 7th bits equal to 1.
+
+We also know that the last bit we use from a character must be a 1, since
+otherwise the do-while loop should otherwise have terminated. Let's try to use
+these rules to work out a few characters.
+
+
+FIRST CHARACTER
+
+The first 7 of our bits are 0100111. However, this is not the usual order we
+write bits in: here the low bit is written first and the high bit is written
+last. After rewriting in the more common order, depending on if we take 6 or 
+7 bits, the first character is either
+
+               0b110010 ---> '2'  or  0b1110010 ---> 'r'.
+
+
+
+SECOND CHARACTER
+
+What happens next depends on whether the first character is a '2' or an 'r'.
+Let's start with the case of '2'. In this case, the next 7 bits are 1001011,
+which means the next character is either:
+
+               0b101001 ---> ')'  or  0b1101001 ---> 'i'.
+
+If the first character was an 'r', then the next 7 bits are 0010110. In this
+case, there is only one possibility for the second character (since the last bit
+we use must be a '1'). 
+
+               0b110100 ---> '4'
+
+
+
+We could continue in this way, if we wanted, and end up finding a variety of
+correct passwords (and this was just assuming printable ones!). To get the
+"correct" password, the one x0r19x91 was hoping we'd find, we need to guess the
+form of the password to narrow down our choices. So far our choices have been
+lowercase letters, numbers, and a random ')'. If we had to guess the character
+set right now, our best guess would likely be lowercase letters and numbers for
+the character set; it would be wise to throw in some punctuation as well. The
+following script produces all valid solutions using lowercase letters, numbers,
+and the common crackme punctuations '_' and '-'. It is a simple depth first
+search through the space of possible passwords.
+
+
+##### FILE: keygen.py
+
+choices = '0100111001011001011110001100001101110110010110011011110011111111' \
+        + '0100101101001111100111111101110001100001110101110111011001011100' \
+        + '1011010001100110111100111111101110011100101111100110100111011101' \
+        + '111111010100011010011100001111000110000110010111'
+
+char_set = 'abcdefghijklmnopqrstuvwxyz0123456789_-'
+
+
+def DFS(password, tail):
+    if len(tail) == 0:
+        print(password)
+        return
+    if len(tail) < 6:
+        return
+    bits = ''.join(reversed(tail[:6]))
+    if bits[0] == '1':
+        x = chr(int(bits, 2))
+        if x in char_set:
+            DFS(password + x, tail[6:])
+    if len(tail) >= 7:
+        if tail[6] == '1':
+            x = chr(int(tail[6] + bits, 2))
+            if x in char_set:
+                DFS(password + x, tail[7:])
+
+password = ''
+DFS(password, choices)
+
+##### end keygen.py
+
+
+Running this gives a substantial list of (360) possible passwords:
+
+    > python3 keygen.py
+
+    2i4c0n4ls_42g_c0un4ibl3_3igrn_b2ac0t
+    2i4c0n4ls_42g_c0un4ibl3_3igrn_br0c0t
+    2i4c0n4ls_42g_c0un4ibl3_3igrn_brp10t
+    2i4c0n4ls_42g_c0un4ibl3_s4grn_b2ac0t
+    2i4c0n4ls_42g_c0un4ibl3_s4grn_br0c0t
+    2i4c0n4ls_42g_c0un4ibl3_s4grn_brp10t
+    2i4c0n4ls_42g_c0un4ibl3_st3rn_b2ac0t
+    2i4c0n4ls_42g_c0un4ibl3_st3rn_br0c0t
+    2i4c0n4ls_42g_c0un4ibl3_st3rn_brp10t
+
+                ... SNIP ...
+    
+    r4t10n4ls_4rso10unt4bl3_st3rn_b2ac0t
+    r4t10n4ls_4rso10unt4bl3_st3rn_br0c0t
+    r4t10n4ls_4rso10unt4bl3_st3rn_brp10t
+    r4t10n4ls_4rso10unt4blso94grn_b2ac0t
+    r4t10n4ls_4rso10unt4blso94grn_br0c0t
+    r4t10n4ls_4rso10unt4blso94grn_brp10t
+    r4t10n4ls_4rso10unt4blso9t3rn_b2ac0t
+    r4t10n4ls_4rso10unt4blso9t3rn_br0c0t
+    r4t10n4ls_4rso10unt4blso9t3rn_brp10t
+
+These are looking pretty good! In fact, near the bottom of the list we see
+passwords starting with 'r4t10n4ls', which looks like the word 'rationals',
+which of course is a math word. This suggests we should reduce our character
+set, removing certain letters. For instance, we don't need 'a', since it looks
+like '4' is used instead, and we don't need 'o', since '0' is used instead. In
+fact if we run the same script using
+
+    char_set = 'bcdfghjklmnpqrstuvwxyz0123456789_-'
+
+we get the must more reasonable list:
+
+    r44c0n4ls_42g_c0unt4bl3_s4grn_br0c0t
+    r44c0n4ls_42g_c0unt4bl3_s4grn_brp10t
+    r44c0n4ls_42g_c0unt4bl3_st3rn_br0c0t
+    r44c0n4ls_42g_c0unt4bl3_st3rn_brp10t
+    r44c0n4ls_4r3_c0unt4bl3_s4grn_br0c0t
+    r44c0n4ls_4r3_c0unt4bl3_s4grn_brp10t
+    r44c0n4ls_4r3_c0unt4bl3_st3rn_br0c0t
+    r44c0n4ls_4r3_c0unt4bl3_st3rn_brp10t
+    r4t10n4ls_42g_c0unt4bl3_s4grn_br0c0t
+    r4t10n4ls_42g_c0unt4bl3_s4grn_brp10t
+    r4t10n4ls_42g_c0unt4bl3_st3rn_br0c0t
+    r4t10n4ls_42g_c0unt4bl3_st3rn_brp10t
+    r4t10n4ls_4r3_c0unt4bl3_s4grn_br0c0t
+    r4t10n4ls_4r3_c0unt4bl3_s4grn_brp10t
+    r4t10n4ls_4r3_c0unt4bl3_st3rn_br0c0t
+    r4t10n4ls_4r3_c0unt4bl3_st3rn_brp10t
+
+Now it's just a matter of choosing the one that makes the most English sense!
+
+    password = r4t10n4ls_4r3_c0unt4bl3_st3rn_br0c0t
+
+Trying this password out:
+
+    > ./login
+    -=-=-=-=-=-=-[ Login ]-=-=-=-=-=-=-
+    Password: r4t10n4ls_4r3_c0unt4bl3_st3rn_br0c0t
+    !! ACCESS GRANTED !!
+
+
+
+
+==================================================
+  SOLUTION: r4t10n4ls_4r3_c0unt4bl3_st3rn_br0c0t
+==================================================
+
+
+
+Comments on this solution:
+
+    1) The first part of the solution spells 'rationals are countable', a
+       foundational theorem in mathematics.
+
+    2) The second part of the solution spells 'Stern-Brocot', referencing the
+       mathematical object known as the Stern-Brocot Tree. Among other things,
+       the Stern-Brocot Tree can be used to show that the rational numbers are
+       countable. 
+
+    3) The math problem in this crackme can be phrased and/or solved using
+       the Stern-Brocot tree, though in my opinion the Euclidean algorithm
+       approach is more clean.
+

@@ -1,0 +1,36 @@
+Next to the standard system tools I used hteditor.
+
+
+"readelf" failed, because of a corrupted header:
+shdr count:     deaf
+shdr strtblidx: babe
+sh offset:      0000dead
+
+Fixing this is possible with some knowledge of the elf format:
+sh offset: 160076
+shdr count: 27
+shdr strtblidx: 26
+
+Most tools should now accept this file.
+
+
+The code uses int3 and raises segv, which will need some extra effort with most debuggers.
+
+
+"strings" reveals some interesting strings:
+<span foreground='green'>victory</span>
+<span foreground='red'>failure</span>
+This is the text when a wrong combination is entered and perhaps the correct one?
+
+Open the new executable in ht, search for the string and jump to the single usage in the asm. Going up the code we recognice some gtk function calls. One string is read from the dialog, a signal is raised, the second string is read. Both strings were checksumed and some calculations were done and the results compared.
+
+The first checksum is just the sum of every char in the username. The password is numerical and the checksum is just the sum of every digit.
+From the digits sum one unknown variable is substracted. Then some values are shifted (what can be ignored, because its shifted more than the int is long resulting in a zero). The value of the username is masked, to reduce huge values. In the end both values are compared.
+
+The unknown variable is used in multiple places. Some reset it to zero, some read it and one is setting it to something different. The function where it is set, is the signal handler. (It is installed for segv and trap.) It will set the variable to 11 for the raised segv.
+
+(Debugging is still possible. Just hook the raise-call and append a sleep. After clicking ok, it will raise the signal, process the signal handler and wait. In this pause attach the debugger and you can step through the algorithm.)
+
+These are all informations needed. The keygen is in key.c.
+
+One working combination: "lagalopex" and "99999999"

@@ -1,0 +1,39 @@
+This crackme asks a 9 character password and checks whether its sha256 hash is equal to a constant value given in the binary. SHA256 is not reversible and brute-forcing is infeasible given the amount of possible combinations. Luckily, the program gives hints for the characters. 
+
+The loop from 0x40064b to 0x4006a0 is indeed strlen. Compiler optimizaiton unrolls the loop so it looks quite long. But if you are familiar with such technique it will not difficult to recognize. 
+
+The code at 0x4006ad checks the 9th char is not '\n'. Combined with the strlen it forces an input of 9 chars. 
+
+The code at 0x4006ba says the first char must be '2'.
+
+The code at 0x4007ab checks whether the ascii value of input[1] is in the range of [70, 73]. This leads to four possiblities, i.e., 'pqrs'.
+
+The call at 0x4007bc checks whether input[2] is in 'jklmn'.
+
+The call at 0x4007cc checks whether input[3] is a digit.
+
+The call at 0x4007dc ensures input[4] == input[5] and both of them are equal to '-'.
+
+The check for chars 6, 7, 8 is slightly more complex. It first converts it to an integer n (base 10), and then check is:
+
+1. the divisor sum of n is 0x32a
+
+2. n is in the range of [0x1a4, 0x1df]
+
+3. n % 60 == 4
+
+I actually ignore 1 because 2 and 3 already gives me the only possible value, 424.
+
+So the uncertainty we have now is:
+
+1. input[1] in 'pqrs'
+
+2. input[2] in 'jklmn
+
+3. input[3] is a digit
+
+altogether 4 * 5 * 10 = 200 possiblities. Then I wrote a small script to try all the possibilites against the program. The correct password is "2sl0--424". 
+
+After you solve it, the password allows you to decrypt the zip which contains the original source code. It is quite interesting to see how the C code differs from the assembly. For example, in the C code, the criteria 2 for chars 678 is n / 60 == 7. The compiler removes the slow division and changes it to a range check. And that check is implemented with only one conditional jump (see code at 0x401d1c). This is also a pretty common optimization used by the compiler. 
+
+xushengli@protonmail.com

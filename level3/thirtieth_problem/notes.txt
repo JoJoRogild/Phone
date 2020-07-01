@@ -1,0 +1,3 @@
+This one shouldn't be too hard, I set its difficulty to 3. The binary was written in C, and should run on Linux, with sudo privileges.
+
+SHA256(file) = 1914bf5a64360583432ffaea0ee19229ad1f946660ae8c7f12e5d9061f60c22e

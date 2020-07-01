@@ -1,0 +1,27 @@
+
+This crackme is linux only. It is compiled for 32 bit PC but
+will run on 64 bit linux as well.
+
+After extracting run the crackme without parameters:
+
+  $ ./staple
+  password: 
+
+Then a prompt appears. Enter a password.
+If the password is correct, you will be notified with
+
+  correct password
+  secret code: ****************
+
+Where the secret code is the password for the
+sourcecode.zip archive. If you get "correct password"
+but not the secret code, your password was wrong (see below).
+
+If the password is incorrect, the crackme will probably
+tell you "incorrect password". Generally assume undefined
+behaviour. 
+It is possible that it will behave strangely
+in case of wrong password (e.g. by not supplying a secret
+code or getting stuck in an endless loop)
+
+

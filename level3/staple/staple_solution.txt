@@ -1,0 +1,61 @@
+Crackme: chtis's staple
+Solved by: acruel, 07 Sep 2016
+Tools used: IDA
+
+Solution:
+I applied some patches for the crackme so that it accepts any string of length 13 as a valid password.
+$ ./staple_patched
+password: 1111111111111
+correct password!
+secret code: 62f6sHpFshNh844rTh
+$
+
+
+Patched bytes:
+Address    |Length |Original bytes |Patched bytes
+-----------+-------+---------------+--------------
+0x080483EA |0x1    |85             |84
+0x0804A613 |0x1    |74             |EB
+0x0804B6A0 |0x4    |05 7A 81 3C    |93 04 C4 CD
+
+
+The crackme expects only one input, password. If the length of the password is 13, the crackme proceeds to copy the function sub_804A522 into the heap and create three pairs of file descriptors via sys_pipe. The pipes are used to pass data between parent and child processes later on.
+
+The main process calls sys_fork twice. The first sys_fork is called at 0x08048337. Then the parent jumps to 0x08048362 at 0x0804835C and the child jumps to the copy of sub_804A522 at 0x0804835C.
+
+The parent passes the password to the child via a pipe and wait for the response. The child uses the password to modify a dword magic number at 0x0804B6A0 and uses the number to xor the copy of 0x86 bytes of data at 0x0804A54A 4 bytes at a time. The magic number is of crucial importance. The child passes the 0x86 bytes of data to the parent via a pipe before exits.
+
+The parent saves the response from the child onto the heap and calls sys_fork again. The second child jumps to the first byte of the response, while the parent wait for the child to pass two pointers to strings via a pipe. If the parent receives two pointers, it prints the secret code.
+
+To find the secret code, you need not to know the password. All you need to know is the magic number the program expects. The magic number is xored with the following array of bytes:
+
+\x32\xB4\x72\xC9\x9B\x8D\x02\x4E\x55\x50\x92\x5D\x96\x87\xC4\xCD\x93\xFB\xD4\x4E\x6B\x24\xB1\x97\x18\x19\x48\x6B\x97\x0C\x4F\x96\x97\x94\x4F\xC0\x0B\xA2\xC0\xC5\xD2\x4D\x2F\xEC\xE0\x61\xA7\xBF\xF6\x70\xE4\xAE\xFC\x60\xA1\xF7\xB3\x32\xF6\xAB\xA5\x77\x8C\xBD\xD5\x77\xAC\x83\xFB\x3C\xF0\xF9\xE1\x50\xAC\xC7\x93\x45\x85\x46\xAE\xB4\x72\xC9\x9B\x8D\xCB\x44\x6D\xEF\xC0\x45\x12\x00\xCC\x4E\x55\x50\x4D\xBA\x97\x8D\x3D\x77\x9B\x04\xC4\xCD\x6C\x11\xBC\x6B\x97\x0C\x3B\xD8\xE7\xA2\xC0\xC5\x03\x94\xC4\xCD\x00\x00\x00\x00\x00\x00\x00\x00
+
+After it is xored, it should contain the string "secret code:". Conversely, if it is xored with the string at a right offset, repetitive pattern of magic number should appear.
+
+The following script prints the magic number to stdout.
+
+--
+#!/usr/bin/python
+
+import struct
+
+def xor_str(str1, str2):
+    result = ""
+    for i in range(0, len(str1)):
+        result += chr(ord(str1[i]) ^ ord(str2[i]))
+    return result
+
+dummy1 = "\x32\xB4\x72\xC9\x9B\x8D\x02\x4E\x55\x50\x92\x5D\x96\x87\xC4\xCD\x93\xFB\xD4\x4E\x6B\x24\xB1\x97\x18\x19\x48\x6B\x97\x0C\x4F\x96\x97\x94\x4F\xC0\x0B\xA2\xC0\xC5\xD2\x4D\x2F\xEC\xE0\x61\xA7\xBF\xF6\x70\xE4\xAE\xFC\x60\xA1\xF7\xB3\x32\xF6\xAB\xA5\x77\x8C\xBD\xD5\x77\xAC\x83\xFB\x3C\xF0\xF9\xE1\x50\xAC\xC7\x93\x45\x85\x46\xAE\xB4\x72\xC9\x9B\x8D\xCB\x44\x6D\xEF\xC0\x45\x12\x00\xCC\x4E\x55\x50\x4D\xBA\x97\x8D\x3D\x77\x9B\x04\xC4\xCD\x6C\x11\xBC\x6B\x97\x0C\x3B\xD8\xE7\xA2\xC0\xC5\x03\x94\xC4\xCD\x00\x00\x00\x00\x00\x00\x00\x00"
+marker = "secret code:"
+
+for i in range(0, len(dummy1) - len(marker)):
+    dummy2 = xor_str(dummy1[i:i+len(marker)], marker)
+    if dummy2[0:4] == dummy2[4:8]:
+        j = i - (i / 4) * 4
+        magic = struct.unpack('<L', dummy2[j:j+4])[0]
+        print "magic = 0x%08x" % magic
+        break
+--
+
+The script shows that the magic number is 0xcdc40493. To get the secret code, I patched the crackme so that the magic number is always 0xcdc40493 and not modified during execution. The patched crackme accepts any password of length 13.

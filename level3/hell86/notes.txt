@@ -1,0 +1,7 @@
+x86_64 linux binary (tested on debian 9 and ubuntu 18.04, should run on any distro). Takes one command line argument and outputs "OK!" if it's correct, "Wrong" if it's not.
+
+Partially written in C, actual verification routine is assembly.
+
+Don't patch the binary, of course - find the correct input.
+
+SHA256: 134b53b78fe74d477bf381ebfd965f92d270f8314886518d451ec3aca29156fa  hell86

@@ -1,0 +1,853 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">
+<html>
+<head>
+<title></title>
+<meta name="generator" content="Bluefish">
+<meta name="author" content="root">
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<meta http-equiv="Content-Type" content="application/xhtml+xml; charset=UTF-8">
+</head>
+<body bgcolor="lightgrey">
+<basefont face="helvetica" fontsize="8">
+<h1>Solution to pcme0</h1>
+<i>solution, description by: rookie (wo_gue@gmx.de).</i><br><br>
+<b>Tools used:</b> <a href="http://radare.nopcode.org/" />radare</a>, linux standard tools.<br><br>
+<h3>Steps to solve:</h3>
+Check filetype:
+<pre>
+> file pcme0
+pcme0: ELF 32-bit LSB executable, Intel 80386, version 1 (SYSV), for GNU/Linux 2.4.1, dynamically linked (uses shared libs), stripped
+</pre>
+at least shared. So library calls can be identified.
+<br><br>
+Running pcme0 shows a couple of strings,
+<pre>
+ ./pcme0
+[pancrackme] v1.0
+Password: 123
+oops
+</pre>
+which can be searched in the executable.
+<pre>
+> strings ./pcme0 | grep -i "pancrackme\|Password\|oops"
+[pancrackme] v1.0
+Password:
+</pre>
+no luck finding "oops". Could have been a good hint, where to find a bad-boy ("oops") exit.
+<br><br>
+Running ltrace to see what pcme0 does (with -i so we can later on compare addresses with the disassembly):
+<pre>
+> ltrace -i ./pcme0
+.
+.
+.
+[0x8048791] __libc_start_main(0x8048ed6, 1, 0xbfb798f4, 0x8049060, 0x8049050 <unfinished ...>
+[0x8048f06] getppid()                                                = 3571
+[0x8048f36] printf("[pancrackme] v1.0\n"[pancrackme] v1.0
+)                            = 18
+[0x8048f57] mprotect(0x8048000, 1264, 7, 0x8048f06, 0xb7f63369)      = 0
+[0x8048fa0] getpid()                                                 = 3572
+[0x8048faf] random()                                                 = 1804289383
+[0x8048ff3] rand(0xb7f63369, 0xb7e82f55, 0xbfb79868, 0x8048ee4, 0xb7f9dff4) = 0x327b23c6
+[0x8048e21] getppid()                                                = 3571
+[0x8048e38] sprintf("/proc/3571/cmdline", "/proc/%d/cmdline", 3571)  = 18
+[0x8048e4c] open("/proc/3571/cmdline", 0, 06763)                     = 3
+[0x8048e78] read(3, "ltrace", 100)                                   = 18
+[0x8048ebf] close(3)                                                 = 0
+[0x8048a00] getpid()                                                 = 3572
+[0x8048a20] signal(14, 0x80488f1)                                    = NULL
+[0x8048a32] pipe(0x804a300)                                          = 0
+[0x8048a45] dup2(0, 3)                                               = 3
+[0x8048a4d] rand(0x80489e6, 0x80489e6, 0x80489e6, 0x80489e6, 3572)   = 0x643c9869
+[0x8048a8d] fork()                                                   = 3573
+[0x8048aab] signal(10, 0x80488e7)                                    = NULL
+[0x8048abf] signal(2, 0x80489ab)                                     = NULL
+[0x8048ae1] write(1, "Password: ", 10Password: )                               = 10
+[0x8048ae9] pause(0x80489e6, 0x80489e6, 0x80489e6, 5, 3572123
+oops
+ <unfinished ...>
+[0xffffe410] --- SIGUSR1 (User defined signal 1) ---
+[0x80488e7] --- SIGCHLD (Child exited) ---
+[0xffffffff] +++ exited (status 64) +++
+</pre> 
+
+interesting parts:
+Seems like comandline is analyzed for some reason.
+<pre>
+[0x8048e4c] open("/proc/3571/cmdline", 0, 06763)                     = 3
+[0x8048e78] read(3, "ltrace", 100)                                   = 18
+[0x8048ebf] close(3)                                                 = 0
+</pre>
+
+A couple of user defined signals are set up:
+<pre>
+[0x8048a20] signal(14, 0x80488f1)                                    = NULL
+.
+[0x8048aab] signal(10, 0x80488e7)                                    = NULL
+.
+[0x8048abf] signal(2, 0x80489ab)                                     = NULL
+</pre>
+
+Looks like the process forks and 
+<pre>
+[0x8048a8d] fork()
+</pre>
+user input is not read in the parent process.
+<br><br>
+Running ltrace again with follow forking option:
+<pre>
+> ltrace -if ./pcme0
+.
+[0x8048a8d] fork(Cannot attach to pid 3589: Operation not permitted
+</pre>
+Looks like process is already traced.
+
+Time to disassemble the binary, using one of radare's tools 'rsc', with script 'bin2txt'. 
+<pre>
+> rsc bin2txt ./pcme0 > pcme0_1.s
+</pre>
+
+Searching for a ptrace call in disassembly shows two occurences:
+<pre>
+_08048b61:  e8 46 fb ff ff          call   _080486ac <ptrace@plt>
+</pre>
+and
+<pre>
+_08048cad:  e8 fa f9 ff ff          call   _080486ac <ptrace@plt>
+</pre>
+so why not replace them with "nop", but make sure the return value is 0.
+
+Starting radare to edit the binary to replace the ptrace calls:
+<pre>
+> cp pcme0 pcme0_patched1
+>  radare -cw ./pcme0_patched1
+warning: Opening file in read-write mode
+open rw ./pcme0_patched1
+[0x00000000]>
+[0x00000000]> s 0xb61
+0x00000B61
+[0x00000B61]> wx 31 c0 90 90 90
+[0x00000B61]> pD 20
+0x00000B61 31c0                      eax ^= eax
+0x00000B63 90                        nop
+0x00000B64 90                        nop
+0x00000B65 90                        nop
+0x00000B66 83c410                    esp += 0x10  ; 16
+0x00000B69 8983a80000                invalid
+[0x00000B61]> q
+</pre>
+<br>
+same for call at _08048cad....<br>
+<br>
+Running patched pcme0 using strace with follow fork:
+<pre>
+> strace -if ./pcme0_patched1
+.
+[ffffe410] clone(Process 4209 attached
+child_stack=0, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD, child_tidptr=0xb7e486f8) = 4209
+[pid  4208] [ffffe410] rt_sigaction(SIGUSR1, {0x80488e7, [USR1], SA_RESTART}, {SIG_DFL}, 8) = 0
+[pid  4208] [ffffe410] rt_sigaction(SIGINT, {0x80489ab, [INT], SA_RESTART}, {SIG_DFL}, 8) = 0
+[pid  4208] [ffffe410] write(1, "Password: ", 10Password: ) = 10
+[pid  4208] [ffffe410] pause( <unfinished ...>
+[pid  4209] [ffffe410] close(4)         = 0
+[pid  4209] [ffffe410] clone(Process 4210 attached
+child_stack=0, flags=CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD, child_tidptr=0xb7e486f8) = 4210
+[pid  4209] [ffffe410] read(0,  <unfinished ...>
+[pid  4210] [ffffe410] rt_sigaction(SIGINT, {0x80489db, [INT], SA_RESTART}, {SIG_DFL}, 8) = 0
+[pid  4210] [ffffe410] rt_sigaction(SIGUSR2, {0x80489db, [USR2], SA_RESTART}, {SIG_DFL}, 8) = 0
+[pid  4210] [ffffe410] rt_sigprocmask(SIG_BLOCK, [CHLD], [], 8) = 0
+[pid  4210] [ffffe410] rt_sigaction(SIGCHLD, NULL, {SIG_DFL}, 8) = 0
+[pid  4210] [ffffe410] rt_sigprocmask(SIG_SETMASK, [], NULL, 8) = 0
+[pid  4210] [ffffe410] nanosleep({201527, 0}, 123
+ <unfinished ...>
+[pid  4209] [ffffe410] <... read resumed> "123\n", 128) = 4
+[pid  4209] [ffffe410] write(3, "oops\n", 5oops
+) = 5
+[pid  4209] [ffffe410] kill(4210, SIGKILL <unfinished ...>
+[pid  4210] [ffffe410] <... nanosleep resumed> 0xbfcda008) = ? ERESTART_RESTARTBLOCK (To be restarted)
+[pid  4209] [ffffe410] <... kill resumed> ) = 0
+[pid  4210] upeek: ptrace(PTRACE_PEEKUSER,4210,48,0): No such process
+[????????] +++ killed by SIGKILL +++
+Process 4210 detached
+[pid  4209] [ffffe410] getppid()        = 4208
+[pid  4209] [ffffe410] --- SIGCHLD (Child exited) @ 0 (0) ---
+[pid  4209] [ffffe410] kill(4208, SIGUSR1) = 0
+[pid  4209] [08048d03] _exit(134521408) = ?
+Process 4209 detached
+[ffffe410] <... pause resumed> )        = ? ERESTARTNOHAND (To be restarted)
+[ffffe410] --- SIGUSR1 (User defined signal 1) @ 0 (0) ---
+[080488e7] --- SIGCHLD (Child exited) @ 0 (0) ---
+[080488ef] _exit(134521408)             = ?
+Process 4208 detached
+</pre>
+Looks better :)
+<br><br>
+So userinput is read in child1 (pid 4209):
+<pre>
+[pid  4209] [ffffe410] read(0,  <unfinished ...>
+.
+[pid  4209] [ffffe410] <... read resumed> "123\n", 128) = 4
+</pre>
+and "oops" is also printed in child1
+<pre>
+[pid  4209] [ffffe410] write(3, "oops\n", 5oops
+) = 5
+</pre> 
+We should conentrate on child1, where password verification is done if we're lucky :)
+<br><br>
+Searching the fork call in disass. at 0x8048a8d and taking a look where child1 is called:
+<pre>
+_08048a8d:  89 45 f0                mov    %eax,0xfffffff0  ; -16
+_08048a90:  83 7d f0 00             cmpl   $0x0,0xfffffff0  ; -16
+_08048a94:  0f 84 9a 00 00 00       je     _08048b34 
+</pre>
+Jump to child 1 must be here, since a value of 0 is returned only to the child process.<br>
+<br>
+We'll take some risk and 'nop' the fork call and carry on with programflow at child1 directly.
+<pre>
+> cp pcme0_patched1  pcme0_patched1_no_parent
+> radare -cw ./pcme0_patched1_no_parent
+warning: Opening file in read-write mode
+open rw ./pcme0_patched1_no_parent
+[0x000018E4]> s 0xa88
+0x00000A88
+[0x00000A88]> pD 20
+0x00000A88 e88ffbffff              ^ call 0x61C   ;
+0x00000A8D 8945f0                    [ebp-0x10] = eax
+0x00000A90 837df000                  cmp dword [ebp-0x10], 0x0
+[0x00000A88]> wx 90 90 90 31 c0
+[0x00000A88]> pD 20
+0x00000A88 90                        nop
+0x00000A89 90                        nop
+0x00000A8A 90                        nop
+0x00000A8B 31c0                      eax ^= eax
+0x00000A8D 8945f0                    [ebp-0x10] = eax
+0x00000A90 837df000                  cmp dword [ebp-0x10], 0x0
+[0x00000A88]>q
+</pre>
+<br><br>
+Now open pcme0_patched1_no_parent in debugger:
+<pre>
+> radare -cw dbg://pcme0_patched1_no_parent
+warning: Opening file in read-write mode
+argv = 'pcme0_patched1_no_parent',
+Program 'pcme0_patched1_no_parent' loaded.
+open debugger rw pcme0_patched1_no_parent
+[0xB7F63810]>  
+</pre>
+set a breakpoint at 0x08048a88 and run.
+<pre>
+[0xB7F53810]> !bp 0x08048a88
+new breakpoint at 0x8048a88
+[0xB7F53810]> !run
+To cleanly stop the execution, type: "^Z kill -STOP 4259 && fg"
+[pancrackme] v1.0
+cont: breakpoint stop (0x8048a88)
+[0xB7F53810]>
+</pre>
+switch to debugger view:
+<pre>
+[0xB7F53810]> V</pre>
+<i>press enter after V</i>
+<br>
+step with F7.<br>
+<br>
+after jumping to child1 first call is sys_open (you can see the written out syscall names in the disassembly (pcme0_1.s) which we have created earlier).
+<pre>
+Disassembly:
+0x08048B34 eip:
+0x08048B34 83ec0c                    esp -= 0xc  ; 12
+0x08048B37 6a04                      push 0x4
+0x08048B39 e8cefaffff              ^ call 0x804860C   ; .._pcme0_pcme0_p+0x6
+</pre>
+jump over with F8.<br><br>
+Now here's a new call which does not show up in the disassembly.
+<pre>
+0x08048B41 e8d6faffff              ^ call _0804861C  ; .._pcme0_pcme0_p+0x6
+</pre>
+As we can see by the address it calls, it is another sys_fork call.<br>
+We can see where the child2 routine enters, by looking at the disassembly
+<pre>
+0x08048B41 e8d6faffff              ^ call _0804861C   <fork@plt> ; .._pcme0_pcme0_p+0x6
+0x08048B46 8983cc000000              [ebx+0xcc] = eax
+0x08048B4C 83bbcc00000000            cmp dword [ebx+0xcc], 0x0
+_08048b53:  0f 84 f0 00 00 00       je     _08048c49 <__gmon_start__@plt+0x4ed> // ->child2
+</pre>
+Child2 does'nt appear to have any passwordvalidation code, so why not take another risk and 'nop' this one too ?
+So step forward until eip is directly at the call
+<pre>
+Disassembly:
+0x08048B41 eip:
+0x08048B41 e8d6faffff              ^ call 0x804861C   ; .._pcme0_pcme0_p+0x6
+</pre>
+and type q.
+<pre>
+[0x08048B41]>
+</pre>
+here we remove the call. And we need to set %eax to <> 0, otherwise we will end up in child2's routine.
+<pre>
+[0x08048B41]> wx b8 01 00 00 00
+[0x08048B41]> pD 20
+0x08048B41 eip:
+0x08048B41 b801000000                eax = 0x1
+0x08048B46 8983cc000000              [ebx+0xcc] = eax
+[0x08048B41]> V  
+</pre>
+type 'p' to switch from view from disassembly to debugger !<br>
+<br>
+Back in debugger view, stepping further there's a sys_read call:
+<pre>
+0x08048BBA e87dfbffff              ^ call 0x804873C   ; .._pcme0_pcme0_p+0x7
+</pre>
+Checking with ltrace we see it's the 'read user input' call:
+<pre>
+[pid 4389] [0x8048bbf] read(0,  <unfinished ...>
+[pid 4390] [0xffffe410] --- SIGSTOP (Stopped (signal)) ---
+[pid 4390] [0xffffe410] --- SIGSTOP (Stopped (signal)) ---
+123
+[pid 4389] [0x8048bbf] <... read resumed> "123\n", 128)              = 4
+</pre>
+<br>
+So we can check where the input buffer is.<br>
+Step on just before the 'real' syscall.
+<pre>
+Registers:
+  eax  0x00000003    esi  0x00000002    eip    0xffffe405
+  ebx  0x00000000    edi  0x00000002    oeax   0xffffffff
+  ecx  0x0804a320    esp  0xbfb6e97c    eflags 0x200246
+  edx  0x00000080    ebp  0xbfb6e97c    cPaZstIdor0 (PZI)
+Disassembly:
+0xFFFFE405 eip:
+0xFFFFE405 0f34                      sysenter
+</pre>
+%eax = 3 standing for the sys_read call, %ebx is the file descriptor and %ecx is the pointer to the buffer.<br>
+Now we have the input buffer,  0x0804a320 :)<br>
+<br>
+use F10 to get back to user code. Since the call expects some input the debugger seams to hang, so just type any character
+and you will end up just behind the 'user input' call.<br>
+<br>
+we can fill up the buffer with some random chars.<br>
+Type q to leave debugger view, add some chars and type V,enter to get back to debugger mode and p to change to the correct view.<br>
+Don't forget to terminate your data with 0x0a(return), as user input would have.
+<pre>
+[0x08048BBF]> s 0x0804a320
+0x0804A320
+[0x0804A320]> wx 31 32 33 34 35 36 37 38 0a
+[0x0804A320]> x 10
+   offset   0 1  2 3  4 5  6 7  8 9  A B  C D  E F  0 1  2 3  4 5  6 7  8 9 0123456789ABCDEF0123456789
+.--------+-----------------------------------------------------------------+---------------------------
+0x0804A320 3132 3334 3536 3738 0a00                                         12345678..
+[0x0804A320]> V 
+</pre>
+<br><br>
+Now we're at the interesting section :))<br>
+Step into the call.
+<pre>
+0x08048BC9 e8e0fcffff              ^ call 0x80488AE   ; entry+0x13e
+</pre>
+and see what it does.<br>
+first it checks if there is any input data available, otherwise jumps to return.
+<pre>
+0x080488B7 803800                    cmp byte [eax], 0x0
+0x080488BA 741f                    v jz 0x80488DB   ; eip+0x24
+.
+.
+0x080488DB c745fc64000000            dword [ebp-0x4] = 0x64
+0x080488E2 8b45fc                    eax = [ebp-0x4]
+0x080488E5 c9                       leave ;--
+0x080488E6 c3                       ret ;--
+</pre>
+Data from buffer pointer [ebp+0x8] is moved to %eax (movsx eax, byte [eax])
+and it is tested for 0x0a(return) (cmp eax, 0xa).
+<pre>
+0x080488BC 8b4508                    eax = [ebp+0x8]
+0x080488BF eip:
+0x080488BF 0fbe00                    movsx eax, byte [eax]
+0x080488C2 83f80a                    cmp eax, 0xa
+0x080488C5 750f                    v jnz 0x80488D6   ; eip+0x17
+</pre>
+otherwise the bufferpointer is increased and there's a loop, continuing with the next byte in buffer, 
+<pre>
+0x080488D6 ff4508                    dword [ebp+0x8]++
+0x080488D9 ebd9                    ^ goto 0x80488B4   ; eip+0xf5
+</pre>
+until 0x0a is reached. And 0x0a is replaced with 0x0 in buffer at bufferpointer [ebp+0x8].<br>
+There is also this: 'dword [ebp-0x4] = 0x64' (or: [0xBFB6E994] = 0x64 ). We don't now what is needed for right now, but perhaps we should keep it in mind.
+<pre>
+0x080488C2 83f80a                    cmp eax, 0xa
+0x080488C5 750f                    v jnz 0x80488D6   ; eip+0x17
+0x080488C7 8b4508                    eax = [ebp+0x8]
+0x080488CA c60000                    byte [eax] = 0x0  ; 0
+0x080488CD c745fc64000000            dword [ebp-0x4] = 0x64
+0x080488D4 eb0c                    v goto 0x80488E2   ; eip+0x23
+.
+.
+0x080488E2 8b45fc                    eax = [ebp-0x4]
+0x080488E5 c9                       leave ;--
+0x080488E6 c3                       ret ;--
+</pre>
+So all done here, was to replace the input terminating byte 0xa with 0x0.<br>
+<br>
+Now we're back from this routine and there's a new call which we can step into.
+<pre>
+0x08048BE0 e80cfdffff              ^ call 0x80488F1   ; entry+0x181
+</pre> 
+but there is also a pretty intereseting structure right below. Looks like some printable characters :) and a write call
+<pre>
+0x08048BE8 c683e40000000a            byte [ebx+0xe4] = 0xa  ; 10
+0x08048BEF c683e40000000a            byte [ebx+0xe4] = 0xa  ; 10
+0x08048BF6 c683e200000070            byte [ebx+0xe2] = 0x70  ; 112
+0x08048BFD c683e10000006f            byte [ebx+0xe1] = 0x6f  ; 111
+0x08048C04 c683e00000006f            byte [ebx+0xe0] = 0x6f  ; 111
+0x08048C0B 8a83e2000000              al = [ebx+0xe2]
+0x08048C11 83c003                    eax += 0x3  ; 3
+0x08048C14 8883e3000000              [ebx+0xe3] = al
+.
+.
+_08048c2c:  e8 cb f9 ff ff          call   _080485fc <write@plt>
+</pre>
+So in order '6f 6f 70 70+3 0a' this prints: "oops". Now we now where we dont want to go.<br>
+This means if we should return from our call we lost. 
+<br><br>
+So, anyway. We step into the next call.<br>
+The call that follows jumps right to the next instruction, so we just carry on
+<pre>
+0x080488F8 e800000000              v call 0x80488FD   ; eip+0x5
+0x080488FD 5b                        pop ebx
+</pre>
+The code below just pops into our eyes. More printable characters.
+<pre>
+0x08048915 85c0                      test eax, eax
+0x08048917 0f8589000000            ^ jnz dword 0x80489A6   ; eip+0xae
+0x0804891D c683e100000065            byte [ebx+0xe1] = 0x65  ; 101
+0x08048924 c683e200000065            byte [ebx+0xe2] = 0x65  ; 101
+0x0804892B c683e300000068            byte [ebx+0xe3] = 0x68  ; 104
+0x08048932 c683e000000079            byte [ebx+0xe0] = 0x79  ; 121
+0x08048939 c683e40000000a            byte [ebx+0xe4] = 0xa  ; 10
+0x08048940 80abe200000004            byte [ebx+0xe2] -= 0x4  ; 4
+</pre> 
+Ordered: '79 65 65-4 68 0a' Printed out: "yeah". Probably here's where we need to end up.<br>
+Seeing:
+<pre>0x08048915 85c0                      test eax, eax
+0x08048917 0f8589000000            ^ jnz dword 0x80489A6   ; eip+0xae
+</pre>  
+we know we must return from our next call with %eax beeing 0.<br>
+<br>
+As we step on, here's a strange sequence:
+<pre>
+0x08048835 7501                    v jnz 0x8048838   ; eip+0x6
+0x08048837 e88b450c03              v call 0xB10CDC7   ; eax+0x30c2aa7
+0x0804883C 45                        ebp++
+</pre>
+An antidebugging trick. A jump to an address, which does not show up in our disassembly. So let's carry on steping.<br>
+Some new code shows up.
+<pre>
+0x08048838 8b450c                    eax = [ebp+0xc]
+0x0804883B 034508                    eax += [ebp+0x8]
+0x0804883E 0fbe10                    movsx edx, byte [eax]
+0x08048841 8b83a8000000              eax = [ebx+0xa8]
+0x08048847 83c03a                    eax += 0x3a  ; 58
+0x0804884A 89d1                      ecx = edx
+0x0804884C 31c1                      ecx ^= eax
+0x0804884E 8d9386000000              lea edx, [ebx+0x86]
+0x08048854 8b450c                    eax = [ebp+0xc]
+0x08048857 0fbe0402                  movsx eax, byte [edx+eax]
+0x0804885B 0fbe84037c000000          movsx eax, byte [ebx+eax+0x7c]
+0x08048863 39c1                      cmp ecx, eax
+0x08048865 7518                    v jnz 0x804887F   ; eip+0x47pre>
+</pre>
+We were not able to see the code at 0x08048838 - 0x0804884A before. Most probably code which the programer did not want us to identify.
+This could be the clue :)))<br>
+%eax is loaded with some kind of pointer:
+<pre>
+0x08048838 8b450c                    eax = [ebp+0xc]
+0x0804883B 034508                    eax += [ebp+0x8]
+</pre> 
+%eax = 0x0804a320 . This is our input buffer.
+<pre>
+0x0804883E 0fbe10                    movsx edx, byte [eax]
+</pre>
+one byte of input buffer [%eax] is moved to %edx .
+And some value (we don't now what this is need for yet) is moved to %eax and 0x3a is added to %eax:
+<pre>
+0x08048841 8b83a8000000              eax = [ebx+0xa8]
+0x08048847 83c03a                    eax += 0x3a  ; 58
+</pre>
+then our input data is moved to %ecx and %ecx is xored with %eax:
+<pre>
+0x0804884A 89d1                      ecx = edx
+0x0804884C 31c1                      ecx ^= eax
+</pre>
+This realy looks like the beginning of some kind of input validation :)<br>
+Need to watch each step now.
+<pre>
+0x0804884E 8d9386000000              lea edx, [ebx+0x86]
+</pre>
+The address %ebx+0x86 is stored in %edx, so this will be a pointer<br>
+<br>
+%eax will also be a pointer for the next couple instructions. Since it's first value is 0 it is most likely an offset pointer.
+<pre>
+0x08048854 8b450c                    eax = [ebp+0xc]
+0x08048857 0fbe0402                  movsx eax, byte [edx+eax]
+</pre>
+After the first time through we end up having %eax=0 and %edx=0x0804a2c6. So we should take a look at memory at 0x0804a2c6<br>
+Type : to switch to commandline. Then:
+<pre>
+:> x 16 @ edx
+   offset   0 1  2 3  4 5  6 7  8 9  A B  C D  E F  0 1 0123456789ABCDEF01
+.--------+---------------------------------------------+-------------------
+0x0804A2C6 0007 0402 0105 0906 0803 0a00 0000 1491      ................
+
+--press any key--
+</pre>
+let's remember these couple of bytes. After any key, press p for debugger view.<br>
+<br>
+Another location in memory we might want to remember is at [%ebx+0x7c] (0x0804a2bc).
+It may hold some data we were looking for, since %eax will be compared to our xored input data at the step after this one.
+<pre>
+0x0804885B 0fbe84037c000000          movsx eax, byte [ebx+eax+0x7c]
+</pre>
+Do a print:
+<pre>
+:> x 16 @ ebx+0x7c
+   offset   0 1  2 3  4 5  6 7  8 9  A B  C D  E F  0 1 0123456789ABCDEF01
+.--------+---------------------------------------------+-------------------
+0x0804A2BC 541a 5f1b 5949 220b 4e52 0007 0402 0105      T._.YI".NR......
+
+--press any key--
+</pre> 
+Wow ! This could be the key data, because at the next step our 0x3a-xored input code is compared to some data in %eax which came from this memory area.
+<pre>
+0x08048863 39c1                      cmp ecx, eax
+0x08048865 7518                    v jnz 0x804887F   ; eip+0x1c
+0x08048867 83ec08                    esp -= 0x8  ; 8
+0x0804886A 8b450c                    eax = [ebp+0xc]
+0x0804886D 40                        eax++
+0x0804886E 50                        push eax
+0x0804886F ff7508                    push dword [ebp+0x8]
+0x08048872 e8a5ffffff              ^ call 0x804881C   ; entry+0xac
+</pre>
+and if these bytes are equal, there's a call, back to beginning of the comparison routine.<br>
+Change register %ecx, so that comparison will succeed.<br>
+type : and
+<pre>
+:> !set ecx 0x54
+
+--press any key--
+</pre>
+Check what our input must have been to get the value 0x54 at this point: 
+<pre>0x54 xor 0x3a = 0x6e = 'n'</pre>
+Set a break at 0x0804884C this is where our input data is xored.
+<pre>
+0x0804884C 31c1                      ecx ^= eax
+</pre>
+and continue with F9<br>
+<br>
+Next offset pointer is moved to %eax:
+<pre>
+0x08048857 0fbe0402                  movsx eax, byte [edx+eax]
+</pre>
+and data at [ebx+0x7c+offset-pointer] are loaded to %eax, to be compared to our input data.
+<pre>
+0x0804885B 0fbe84037c000000          movsx eax, byte [ebx+eax+0x7c]
+0x08048863 39c1                      cmp ecx, eax
+</pre>  
+this time %eax=0x07, so looking back at:
+<pre>
+:> x 16 @ edx
+   offset   0 1  2 3  4 5  6 7  8 9  A B  C D  E F  0 1 0123456789ABCDEF01
+.--------+---------------------------------------------+-------------------
+0x0804A2C6 0007 0402 0105 0906 0803 0a00 0000 1491      ................
+</pre>
+these seem to be the offset databytes and if we look again, at what could be the scrambled password:
+<pre>
+:> x 16 @ ebx+0x7c
+   offset   0 1  2 3  4 5  6 7  8 9  A B  C D  E F  0 1 0123456789ABCDEF01
+.--------+---------------------------------------------+-------------------
+0x0804A2BC 541a 5f1b 5949 220b 4e52 0007 0402 0105      T._.YI".NR......
+
+--press any key--
+</pre>
+
+We can make our first guess. Use the offset bytes at %edx (0x0804A2C6) byte for byte in order, to arrange the order of the password bytes.<br>
+Should become: '54 0b 59 5f 1a 49 52 22 4e 1b 00'<br>
+<br>
+Let's take a shot and xor all bytes with the mask 0x3a which is the mask already used twice now.<br>
+Result: '6e 31 63 65 20 73 68 18 74 21 3a" looks like the scrambled password ends here.<br>
+Would spell: "n1ce sh t!:" . Hey, almost dictionary words. We're real lucky :))))<br>
+But there's an unprintable character 0x18 and we can't be sure if this was all of the password.<br>
+<br>
+We could search the binary for the first couple of scrambled bytes, upto the unprintable one.<br>
+Let's use the radare.
+<pre>
+ radare ./pcme0
+open ro ./pcme0
+[0x00000000]> /x 54 1a 5f 1b 59 49
+1
+[0x00000000]> f
+000 0x000012bc  512                        hit0[0]  54 1a 5f 1b 59 49 0a 0b 4e 52 00..
+</pre>
+Great :) Found the byte with 0x22 exchanged by 0x0a which is:
+<pre>0x0b xor 0x3a = '0'</pre>
+First password guess would be "n1ce sh0t!:"<br>
+<br>
+So we'll try this one.<br>
+Quit radare q, q, Y. <font color="red">!! All the patching done while running radare in debugger mode is lost !!</font>, so load the file into radare:
+<pre>
+> radare -cw pcme0_patched1_no_parent
+</pre>
+and check if all patches above are in place. Otherwise redo them, quit radare and restart with debugger:
+<pre>
+> radare -cw dbg://pcme0_patched1_no_parent
+</pre>
+set a breakpoint right before the call where the user input terminator is replaced, and run.<br> 
+Type any character when debugger seems to hang after [pancrackme] v1.0 output.
+<pre>
+> radare -cw dbg://pcme0_patched1_no_parent
+warning: Opening file in read-write mode
+argv = 'pcme0_patched1_no_parent',
+Program 'pcme0_patched1_no_parent' loaded.
+open debugger rw pcme0_patched1_no_parent
+[0xB7EEF810]> !bp 0x08048bc9
+new breakpoint at 0x8048bc9
+[0xB7EEF810]> !run
+To cleanly stop the execution, type: "^Z kill -STOP 4681 && fg"
+[pancrackme] v1.0
+1
+cont: breakpoint stop (0x8048bc9)
+</pre>
+seek to input buffer location, write password bytes 
+(use the one with the unprintable character, because that's the one that must match the scrambled password in memory, as long as we're running the patched binary)
+and doublecheck:
+<pre>
+[0xB7EEF810]> s 0x804a320
+0x0804A320
+[0x0804A320]> wx 6e 31 63 65 20 73 68 18 74 21 3a 0a
+   offset   0 1  2 3  4 5  6 7  8 9  A B  C D  E F  0 1  2 3  4 5  6 7  8 9 0123456789ABCDEF0123456789
+.--------+-----------------------------------------------------------------+---------------------------
+0x0804A320 6e31 6365 2073 6818 7421 3a0a 0000 0000                          n1ce sh.t!:.....
+</pre>
+Set a breakpoint at the location, where input and stored password bytes are compared.
+<pre>
+[0x0804A320]> !bp 0x08048863
+new breakpoint at 0x8048863
+</pre>
+run and switch to debugger view when breakpoint was hit.
+<pre>
+[0x0804A320]> !run
+To cleanly stop the execution, type: "^Z kill -STOP 4681 && fg"
+cont: breakpoint stop (0x8048863)
+[0x0804A320]> V
+</pre>
+%eax and %ecx must be equal to each other at the breakpoint,
+as long as new bytes are read from the input buffer and the buffer terminator 0x0 is not reached.<br>
+Keep continuing with F9.
+<pre>
+Registers:
+  eax  0x00000059    esi  0x00000002    eip    0x08048863
+  ebx  0x0804a240    edi  0x00000002    oeax   0xffffffff
+  ecx  0x00000059    esp  0xbf90aa2c    eflags 0x0206
+  edx  0x0804a2c6    ebp  0xbf90aa34    cPazstIdor0 (PI)
+Disassembly:
+0x08048863 eip:
+0x08048863 39c1                      cmp ecx, eaxaybe 
+...
+</pre>
+Something went wrong !
+<pre>
+  eax  0x00000054    esi  0x00000002    eip    0x08048863
+  ebx  0x0804a240    edi  0x00000002    oeax   0xffffffff
+  ecx  0x0000003a    esp  0xbf90a90c    eflags 0x0206
+  edx  0x0804a2c6    ebp  0xbf90a914    cPazstIdor0 (PI)
+Disassembly:
+0x08048863 eip:
+0x08048863 39c1                      cmp ecx, eax
+</pre>
+we did not reach the terminator yet.<br>
+Maybe the last character of the password is wrong. The ':' at the end strange anyway, "n1ce sh0t!:" .<br>
+But let's keep on going to see what happens.<br>
+Looks bad :( we need %eax to be 0x0 to go to the "yeah" output call.
+<pre>
+Registers:
+  eax  0x00000001    esi  0x00000002    eip    0x08048915
+  ebx  0x0804a240    edi  0x00000002    oeax   0xffffffff
+  ecx  0x0000003a    esp  0xbf90aa84    eflags 0x0296
+  edx  0x0804a2c6    ebp  0xbf90aa8c    cPAzStIdor0 (PASI)
+Disassembly:
+0x08048915 eip:
+0x08048915 85c0                      test eax, eax
+0x08048917 0f8589000000            ^ jnz dword 0x80489A6   ; eip+0x91
+0x0804891D c683e100000065            byte [ebx+0xe1] = 0x65  ; 101
+0x08048924 c683e200000065            byte [ebx+0xe2] = 0x65  ; 101
+0x0804892B c683e300000068            byte [ebx+0xe3] = 0x68  ; 104
+0x08048932 c683e000000079            byte [ebx+0xe0] = 0x79  ; 121
+0x08048939 c683e40000000a            byte [ebx+0xe4] = 0xa  ; 10
+0x08048940 80abe200000004            byte [ebx+0xe2] -= 0x4  ; 4
+0x08048947 83ec04                    esp -= 0x4  ; 4
+0x0804894A 6a05                      push 0x5
+0x0804894C 8d83e0000000              lea eax, [ebx+0xe0]
+0x08048952 50                        push eax
+0x08048953 ffb3c0000000              push dword [ebx+0xc0]
+0x08048959 e89efcffff              ^ call 0x80485FC   ; .._pcme0_pcme0_p+0x5
+</pre>
+Need to check where %eax was set to 0x1:<br>
+This could be somewhere just before we return, at the end of the password validation routine.
+Because this was the last routine that was called before %eax is tested fo 0x0. 
+<pre>
+_0804890d:  e8 0a ff ff ff          call   _0804881c <compare: input - key>
+;--
+_08048912:  83 c4 08                add    $0x8,%esp
+_08048915:  85 c0                   test   %eax,%eax
+</pre>
+probably here:
+<pre>
+_0804889f:  c7 45 f8 01 00 00 00    movl   $0x1,0xfffffff8  ; -8
+_080488a6:  8b 45 f8                mov    0xfffffff8  ; -8
+_080488a9:  8b 5d fc                mov    0xfffffffc  ; -4
+_080488ac:  c9                      leave
+_080488ad:  c3                      ret
+</pre>
+Let's rerun, set a break and force an immediate error and watch what happens:
+<pre>
+ radare -cw dbg://pcme0_patched1_no_parent
+warning: Opening file in read-write mode
+argv = 'pcme0_patched1_no_parent',
+Program 'pcme0_patched1_no_parent' loaded.
+open debugger rw pcme0_patched1_no_parent
+[0xB7FAB810]> !bp 0x08048863     
+new breakpoint at 0x8048863
+[0xB7FAB810]> !run
+To cleanly stop the execution, type: "^Z kill -STOP 4684 && fg"
+[pancrackme] v1.0
+1
+cont: breakpoint stop (0x8048863)
+[0xB7FAB810]> V
+</pre>
+We're at the user input, password byte comparison location, steping on.<br>
+We were right. We reach the location where %eax is set to 0x1 .
+<pre>
+0x0804889F c745f801000000            dword [ebp-0x8] = 0x1
+0x080488A6 8b45f8                    eax = [ebp-0x8]
+0x080488A9 8b5dfc                    ebx = [ebp-0x4]
+</pre>
+Now we know we don't want to reach 0x0804889F but following code:
+<pre>
+0x08048896 c745f800000000            dword [ebp-0x8] = 0x0
+0x0804889D eb07                    v goto 0x80488A6   ; entry+0x136
+0x0804889F c745f801000000            dword [ebp-0x8] = 0x1
+0x080488A6 8b45f8                    eax = [ebp-0x8]
+0x080488A9 8b5dfc                    ebx = [ebp-0x4]
+0x080488AC c9                       leave ;--
+0x080488AD c3                       ret ;--
+</pre>
+We need to understand this part:
+<pre>
+0x0804887F 0fbe8390000000            movsx eax, byte [ebx+0x90]
+0x08048886 3b450c                    cmp eax, [ebp+0xc]
+0x08048889 7514                    v jnz 0x804889F   ; entry+0x12f
+0x0804888B 8b450c                    eax = [ebp+0xc]
+0x0804888E 034508                    eax += [ebp+0x8]
+0x08048891 803800                    cmp byte [eax], 0x0
+0x08048894 7509                    v jnz 0x804889F   ; entry+0x12f
+</pre>
+Let's rerun. With the same breakpoint as before, but now taking a closer look at what happens at the section above.<br>
+Here we need %eax to be 0x0 (as in location [ebp+0xc]) but it is 0x0a:
+<pre>
+0x08048886 3b450c                    cmp eax, [ebp+0xc]
+.
+.
+:> x 1 @ ebp+0xc
+   offset   0 1  2 3  4 5  6 7  8 9  A B  C D  E F  0 1 0123456789ABCDEF01
+.--------+---------------------------------------------+-------------------
+0xBFACA440 00                                           .
+
+--press any key--
+</pre>
+So where is 0x0a moved to %eax ?<br>
+must be here:
+<pre>
+0x0804885B 0fbe84037c000000          movsx eax, byte [ebx+eax+0x7c]
+</pre>
+We must find out at which offset of the scrambled password we can find 0x0.
+<pre>
+:> x 16 @ ebx+0x7c
+   offset   0 1  2 3  4 5  6 7  8 9  A B  C D  E F  0 1 0123456789ABCDEF01
+.--------+---------------------------------------------+-------------------
+0x0804A2BC 541a 5f1b 5949 220b 4e52 0007 0402 0105      T._.YI".NR......
+</pre>
+It is offset 0x0a. So 0x0a is the last offset byte we should move to %eax.
+This means our password is only allowed to have 10 characters (0-9).
+Lets try: "n1ce sh0t!".
+<pre>
+> radare -cw dbg://pcme0_patched1_no_parent
+warning: Opening file in read-write mode
+argv = 'pcme0_patched1_no_parent',
+Program 'pcme0_patched1_no_parent' loaded.
+open debugger rw pcme0_patched1_no_parent
+[0xB7FD4810]> !bp 0x08048bc9
+new breakpoint at 0x8048bc9
+[0xB7FD4810]> !run
+To cleanly stop the execution, type: "^Z kill -STOP 4719 && fg"
+[pancrackme] v1.0
+1
+cont: breakpoint stop (0x8048bc9)
+[0xB7FD4810]> s 0x804a320
+0x0804A320
+[0x0804A320]> wx 6e 31 63 65 20 73 68 18 74 21 0a
+[0x0804A320]> x 11
+   offset   0 1  2 3  4 5  6 7  8 9  A B  C D  E F  0 1  2 3  4 5  6 7  8 9 0123456789ABCDEF0123456789
+.--------+-----------------------------------------------------------------+---------------------------
+0x0804A320 6e31 6365 2073 6818 7421 0a                                      n1ce sh.t!.
+[0x0804A320]> !bp 0x0804887f
+new breakpoint at 0x804887f
+[0x0804A320]> !run
+To cleanly stop the execution, type: "^Z kill -STOP 4719 && fg"
+cont: breakpoint stop (0x804887f)
+[0x0804A320]> V
+</pre>
+looks good :)) %eax is 0x0. Thats what we need it to be.
+<pre>
+Registers:
+  eax  0x00000000    esi  0x00000002    eip    0x0804887f
+  ebx  0x0804a240    edi  0x00000002    oeax   0xffffffff
+  ecx  0x0000003a    esp  0xbfcfc51c    eflags 0x0206
+  edx  0x0804a2c6    ebp  0xbfcfc524    cPazstIdor0 (PI)
+Disassembly:
+0x0804887F eip:
+0x0804887F 0fbe8390000000            movsx eax, byte [ebx+0x90]
+0x08048886 3b450c                    cmp eax, [ebp+0xc]
+</pre>
+same here:
+<pre>
+0x08048891 803800                    cmp byte [eax], 0x0
+0x08048894 7509                    v jnz 0x804889F   ; eip+0xe
+..
+:> x 1 @ eax
+   offset   0 1  2 3  4 5  6 7  8 9  A B  C D  E F  0 1 0123456789ABCDEF01
+.--------+---------------------------------------------+-------------------
+0x0804A32A 00                                           .
+
+--press any key--
+</pre>
+<br><br>
+<h3>Finally made it :)))</h3>
+<pre>
+yeah
+User defined signal 1
+</pre>
+<br><br>
+Just to make sure:
+<pre>
+> ./pcme0
+[pancrackme] v1.0
+Password: n1ce sh0t!
+yeah
+</pre>
+<br><br>
+<h2>That's it !</h2>
+<br><br>
+Thanks to Pancake for this great crackme. Had a lot of fun, eventhough this was a pretty tough one (at least for me) and learned some cool tricks :)<br>
+<br><i>BTW, Pancake is also the guy who wrote radare and tools. Pretty fine tools for this kind of work :))</i>
+
+</body>
+</html>

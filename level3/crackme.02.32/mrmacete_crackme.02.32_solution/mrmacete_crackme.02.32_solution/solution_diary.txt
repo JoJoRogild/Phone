@@ -1,0 +1,66 @@
+
+First of all, a brief overview investigation:
+
+# readelf -h crackme.02.32 
+
+readelf: Error: Unable to read in 0xffff bytes of section headers
+ELF Header:
+  Magic:   7f 45 4c 46 01 01 01 00 00 00 00 00 00 00 00 00 
+  Class:                             ELF32
+  Data:                              2's complement, little endian
+  Version:                           1 (current)
+  OS/ABI:                            UNIX - System V
+  ABI Version:                       0
+  Type:                              EXEC (Executable file)
+  Machine:                           Intel 80386
+  Version:                           0xffffffff
+  Entry point address:               0x8048480
+  Start of program headers:          52 (bytes into file)
+  Start of section headers:          3276 (bytes into file)
+  Flags:                             0x0
+  Size of this header:               65535 (bytes)
+  Size of program headers:           32 (bytes)
+  Number of program headers:         8
+  Size of section headers:           65535 (bytes)
+  Number of section headers:         65535
+  Section header string table index: 65535 <corrupt: out of range>
+readelf: Error: Unable to read in 0xfffe0001 bytes of section headers
+
+It seems that ELF section header has been stripped, and the ELF header has some inconsistent values. 
+
+Opening the file with an hex editor, though, shows that the executable is not packed or encrypted (reassuring "GNU" ascii, and familiar strings pops out here and there, such as remains of section headers, libc imports, etc...).
+
+A quick trial with gdb, results in segmentation fault and trace error. Ok, i tried, let's try with static analysis first :)
+
+Opening the file in Hopper (the demo version is enough for this) it is clear that the corruption of ELF doesn't help getting the executable properly disassembled, and some anti-disassembling tecniques are in place (some basic return-oriented programming at a first sight).
+
+Fortunately, with Hopper it is easy to disassemble portions of the file manually, switching them between data and code interpretations.
+
+My goal was just to find the password checking routine, so i proceeded like this:
+
+	1- located easily the string "The password is correct!\nCongratulations!!!\n", the address is 080488b8
+
+	2- assuming that there should be some instruction with a reference to that address, searched in the hex editor for the little endian address "b8 88 04 08" and annotated the offset, 0x788
+
+	3- going to offset 0x788, i marked it as code, discovering the containing procedure and the called functions too
+
+	4- the function at address 0x080486aa, it is clearly the password checking function, what it does is comparing 9 bytes of what presumably is the input with 9 hardcoded bytes located at address 0x8049bb8
+
+	5- looking at the 9 bytes stored at 0x8049bb8 it is clear that it is not ascii or utf-8 because values are quite high, namely [ 0xf7 0xf8 0xf1 0xf4 0xf1 0xf8 0xb3 0xfc 0xfc ]
+
+	6- this means that the input must pass through some transformation stage, that can be easily located at address 0x08048631 and it is a poorly obfuscated char-by-char OR operation with the constant 0x90
+
+	7- so the accepted passwords are all the ones that ORed to 0x90 char-by-char will produce the hardcoded sequence, for example "ghadah#ll" is one that can be obtained by the operation HARCODED_BYTE & ~ 0x90
+
+
+How to obtain all the possible solutions:
+
+	1- notice that 0x90 in binary is 10010000b
+
+	2- for each of the hardcoded password's bytes, obtain the four possible numbers that ORed with 0x90 will result it the password byte itself
+
+  3- to avoid compatibility issues, ignore all combinations that include charcodes > 127, i.e. outside ascii/utf8 common range
+
+The included keygen.py generates all possible solutions with "safe" chars.
+
+	

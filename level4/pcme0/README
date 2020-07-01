@@ -1,0 +1,66 @@
+
+   _____  __  _ __  __
+  /_    \/  /| |  |/  \
+    |  _/  C |    |  _/_  [  2007-08-31  ]
+    |__| \__\|_\/_|\___/
+  
+
+  PCME ( stands for Pancakes Crack Millenium Edition )
+  ####------------------------------------------------
+
+ Welcome to the first crackme of the pcme series.
+
+ I will try to periodically publish crackmes for GNU/Linux.
+ Just let me know what do you think about the techniques
+ used in this crackme.
+
+ So, providing a paper explaining how did you get the
+ password, tools used, how to patch a piece, of it, etc..
+ you will receive a certain amount of points.
+
+ Invalid reports will be banned with -50 points.
+ So, take care ;)
+
+ Social engineering questions are accepted too.
+
+ The 2 first people achieving a certain "quest" will receive
+ the double of points.
+
+ It is not valid to replace huge amount of code, only small
+ patches will be accepted.
+
+ This rank will be publicly updated on this README and the
+ end time will be at the end of the year. Then I'll make
+ public all the papers and explanations you have sent me.
+
+ The points are:
+
+ 100 - patch antidbg      binary patches and explanation
+ 200 - patch fuckers      fix console hang when ^C
+ 200 - code map           a global pseudo-code of the whole program
+ 200 - explain algo       explain the cipher algorithm used for the password
+ 300 - optimize program   reduce code and cleanup the execution path)
+ 300 - patch always ok    make the program accept all the passwords
+ 500 - extract password   extract correct password
+ 
+ Send me a email with your questions to update the FAQ section.
+
+   pancake 6) youterm .) com
+
+
+  FAQ
+  ###
+
+ (empty)
+
+
+ Have fun!
+
+ PD: Never expect these points become money or whatever. They
+ are just _points_ :)
+
+
+
+ Osu Tatakae! Sexy Pandas!
+
+                                                  --pancake

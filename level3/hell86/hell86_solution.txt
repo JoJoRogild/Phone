@@ -1,0 +1,792 @@
+This challenge is like a computer science analogue of alchemy, turning fatal signals into 
+crackme gold. It's not an exaggeration to say that every single instruction in the password
+verification routine causes the OS to throw an illegal instruction signal (SIGILL). 
+Ordinarily such a signal would cause a process to be terminated, but this program sets up a
+special handler for SIGILL signals to deal with them; it is the handler that actually 
+carries out the password verification.
+
+The core of this program runs something like this:
+
+    1) Program intentionally crashes.
+    2) OS tells handler the program is crashing.
+    3) Handler "fixes" the crash by carrying out the next step in password verification.
+    4) Go back to 1.
+
+The end goal of this challenge is then to understand how the handler works. Once we know 
+this, generating the correct password will be easy.
+
+
+
+
+                             =============================
+                                Understanding the setup
+                             =============================
+
+
+This program starts out very simple. The main function is just a few lines long and involves
+nothing complicated. It is shown below (disassembled by gdb, comments mine):
+
+   0xfc0:	push   rbp
+   0xfc1:	push   rbx
+   0xfc2:	mov    rbp,rsi
+   0xfc5:	mov    ebx,edi
+   0xfc7:	sub    rsp,0x8
+   0xfcb:	call   0x19c6                  # sets up alternate signal stack
+   0xfd0:	test   al,al
+   0xfd2:	mov    edx,0x1
+   0xfd7:	je     0x1028
+   0xfd9:	call   0x1965                  # declares alternate SIGILL handler function
+   0xfde:	test   al,al
+   0xfe0:	mov    edx,0x2
+   0xfe5:	je     0x1028
+   0xfe7:	movsxd rdi,ebx
+   0xfea:	mov    rsi,rbp
+   0xfed:	call   0x1190                  # call the password verification function
+   0xff2:	cmp    rax,0x1
+   0xff6:	lea    rdi,[rip+0x10da]        # 0x20d7   "Wrong" 
+   0xffd:	je     0x1021
+   0xfff:	cmp    rax,0x2
+   0x1003:	lea    rdi,[rip+0x10d3]        # 0x20dd   "[hell86 crackme] Please pass ..."
+   0x100a:	je     0x1021
+   0x100c:	test   rax,rax
+   0x100f:	lea    rdi,[rip+0x10bd]        # 0x20d3   "OK!"
+   0x1016:	lea    rax,[rip+0x1102]        # 0x211f   "You have encountered a bug"
+   0x101d:	cmovne rdi,rax
+   0x1021:	call   0xf30 <puts@plt>
+   0x1026:	xor    edx,edx
+   0x1028:	mov    eax,edx
+   0x102a:	pop    rdx
+   0x102b:	pop    rbx
+   0x102c:	pop    rbp
+   0x102d:	ret    
+
+There are two calls of interest to us. Obviously, the password verification function will be
+important. Let's have a quick peek at it with gdb:
+
+(gdb) x/20i 0x1190
+
+   0x1190:	ud2    
+   0x1192:	add    al,BYTE PTR [rax]
+   0x1194:	add    BYTE PTR [rax],al
+   0x1196:	add    BYTE PTR [rax],al
+   0x1198:	add    BYTE PTR [rax],al
+   0x119a:	or     DWORD PTR [rip+0xb0f0000],ecx        # 0xb0f11a0
+   0x11a0:	add    al,BYTE PTR [rax]
+   0x11a2:	add    BYTE PTR [rax],al
+   0x11a4:	add    BYTE PTR [rax],al
+   0x11a6:	add    BYTE PTR [rax],al
+   0x11a8:	and    al,0x0
+   0x11aa:	or     BYTE PTR [rax],al
+   0x11ac:	ud2    
+   0x11ae:	add    BYTE PTR [rax],al
+   0x11b0:	add    BYTE PTR [rax],al
+   0x11b2:	add    BYTE PTR [rax],al
+   0x11b4:	add    BYTE PTR [rax],al
+   0x11b6:	sub    al,BYTE PTR [rax]
+   0x11b8:	add    BYTE PTR [rax],al
+   0x11ba:	ud2    
+
+Eeeek! You don't have to be an expert reverse engineer to know that doesn't look right. 
+Immediately, the very first instruction, is ud2. What is ud2? Looking it up in the manual,
+ud2 is defined (unironically) as "undefined instruction." The description reads:
+
+"Generates an invalid opcode exception. This instruction is provided for software testing to
+explicitly generate an invalid opcode exception. The opcode for this instruction is reserved
+for this purpose."
+
+In other words, ud2 is a "crash on purpose" command. And the password verification function
+has lots of ud2. In fact, if we look at the raw bytes of this function, we see that the ud2
+instructions (opcode 0f 0b) are evenly spaced out (with 12 bytes interspersed between each 
+one):
+
+> objdump -s --start-address=0x1190 --stop-address=0x1990 hell86
+
+   1190 0f0b0200 00000000 0000090d 00000f0b  ................
+   11a0 02000000 00000000 24000800 0f0b0000  ........$.......
+   11b0 00000000 00002a00 00000f0b 08000000  ......*.........
+   11c0 00000000 2c090900 0f0b0000 00000000  ....,...........
+   11d0 00001008 09000f0b e4110000 00000000  ................
+   11e0 09100000 0f0b0000 00000000 00001500  ................
+   11f0 0a000f0b 00000000 00000000 180a0f00  ................
+   1200 0f0bf0ff ffffffff ffff2c0f 0f000f0b  ..........,.....
+   1210 f0ffffff ffffffff 14000a08 0f0bda17  ................
+   1220 00000000 00002800 00000f0b 24000000  ......(.....$...
+   1230 00000000 240d0d00 0f0bce13 00000000  ....$...........
+   1240 00002700 0d000f0b cd200000 00000000  ..'...... ......
+   1250 09080000 0f0bda17 00000000 00002800  ..............(.
+   1260 00000f0b f8ffffff ffffffff 14000a0d  ................
+   1270 0f0bf0ff ffffffff ffff1008 0a000f0b  ................
+   1280 cd200000 00000000 09090000 0f0b0000  . ..............
+
+                        ... SNIP ...   
+
+   1890 0f0b0100 00000000 00002c08 08000f0b  ..........,.....
+   18a0 01000000 00000000 2c090900 0f0b4a18  ........,.....J.
+   18b0 00000000 00002700 0c000f0b 00000000  ......'.........
+   18c0 00000000 29000000 0f0b0000 00000000  ....)...........
+   18d0 0000180d 08000f0b 00000000 00000000  ................
+   18e0 0a000d00 0f0b2a19 00000000 00002600  ......*.......&.
+   18f0 00000f0b 00000000 00000000 21000009  ............!...
+   1900 0f0b0000 00000000 00002a00 00000f0b  ..........*.....
+   1910 01000000 00000000 2c0d0d00 0f0bd618  ........,.......
+   1920 00000000 00000910 00000f0b 00000000  ................
+   1930 00000000 090d0000 0f0b0000 00000000  ................
+   1940 00002900 0000488b 82a80000 00488d72  ..)...H......H.r
+   1950 28488d78 024883c0 0e488982 a8000000  (H.x.H...H......
+   1960 e97b0500 005331c0 b9260000 004881ec  .{...S1..&...H..
+   1970 a0000000 488d7c24 08f3ab48 8d05c4ff  ....H.|$...H....
+   1980 ffff488d 7c2410c7 84249000 00000400  ..H.|$...$......
+
+
+The pattern appears to stop right about at address 0x1946. There's still no obvious meaning
+to the 12 bytes between each ud2. We'll have to work that out later.
+
+Let's move on now to the second call of interest from the main function, namely, the call to
+the function that sets up the SIGILL signal handler, disassembled below.
+
+   0x1965:	push   rbx
+   0x1966:	xor    eax,eax
+   0x1968:	mov    ecx,0x26
+   0x196d:	sub    rsp,0xa0
+   0x1974:	lea    rdi,[rsp+0x8]
+   0x1979:	rep stos DWORD PTR es:[rdi],eax
+   0x197b:	lea    rax,[rip+0xffffffffffffffc4]        # 0x1946
+   0x1982:	lea    rdi,[rsp+0x10]
+   0x1987:	mov    DWORD PTR [rsp+0x90],0x8000004
+   0x1992:	mov    QWORD PTR [rsp+0x8],rax
+   0x1997:	call   0xf60 <sigfillset@plt>
+   0x199c:	xor    edx,edx
+   0x199e:	test   eax,eax
+   0x19a0:	jne    0x19bb
+   0x19a2:	lea    rbx,[rsp+0x8]
+   0x19a7:	xor    edx,edx
+   0x19a9:	mov    edi,0x4
+   0x19ae:	mov    rsi,rbx
+   0x19b1:	call   0xf90 <sigaction@plt>
+   0x19b6:	test   eax,eax
+   0x19b8:	sete   dl
+   0x19bb:	add    rsp,0xa0
+   0x19c2:	mov    al,dl
+   0x19c4:	pop    rbx
+   0x19c5:	ret    
+
+The call to sigaction is what tells the OS what function will handle the SIGILL signals. 
+Specifically, the second parameter of sigaction is a struct, the first member of which is
+the address of the handler function. After unraveling this, we see that the address of the
+handler function is at 0x1946. Notice, this was exactly where we saw the pattern of evenly spaced ud2s end. 
+
+CONCLUSIONS: (1) The password verification function consists of ud2 instructions, with 12
+bytes separating them, starting at address 0x1190 and stopping right before 0x1946.
+(2) The function which will handle SIGILL signals is at address 0x1946.
+
+
+
+                             =============================
+                               Understanding the handler
+                             =============================
+
+
+At this point during execution, anytime an illegal instruction is encountered, the OS calls
+upon the handler to deal with it. According to the sigaction documentation, the handler is
+called with three arguments: the signal number (4 for SIGILL), a siginfo_t, and a 
+ucontext_t. Only the third of these is used by our handler. 
+
+What is a ucontext_t? It is a struct containing information about the state of the process
+when the SIGILL signal was generated. It will be important to understand something about the
+layout of this struct. On my machine, ucontext_t is defined in ucontext.h as follows (I've
+added the size of each member as a comment). 
+
+typedef struct ucontext
+  {
+    unsigned long int uc_flags;             //   8 bytes
+    struct ucontext *uc_link;               //   8 bytes
+    stack_t uc_stack;                       //  24 bytes
+    mcontext_t uc_mcontext;                 // 256 bytes  <-- important for us
+    __sigset_t uc_sigmask;                  // 128 bytes
+    struct _libc_fpstate __fpregs_mem;      // 512 bytes
+  } ucontext_t;                      // Total: 936 bytes
+
+As it turns out, our handler only uses the uc_mcontext member of the struct, which holds the
+state of the processor when the SIGILL signal was generated. In particular, uc_mcontext 
+holds the values that were in each register. Within memory, uc_mcontext starts as an array
+of register values:
+
+uc_mcontext = { R8, R9, R10, R11, R12, R13, R14, R15, RDI, RSI, RBP, RBX, RDX, RAX, RCX,
+                RSP, RIP, EFLAGS, ... }
+
+Here I'm using capital letters in the names of the registers to indicate that these are not
+the *current* values of the registers, but rather the values that the registers held when
+the SIGILL was generated. I will use this convention throughout.
+
+We are now in a position to dive into the handler. Disassembling with gdb, the handler
+starts as follows:
+
+   0x1946:	mov    rax,QWORD PTR [rdx+0xa8]
+   0x194d:	lea    rsi,[rdx+0x28]
+   0x1951:	lea    rdi,[rax+0x2]
+   0x1955:	add    rax,0xe
+   0x1959:	mov    QWORD PTR [rdx+0xa8],rax
+   0x1960:	jmp    0x1ee0
+   -------   
+   0x1ee0:	movzx  edx,BYTE PTR [rdi+0x8]
+   0x1ee4:	lea    rax,[rip+0x201195]        # 0x203080
+   0x1eeb:	jmp    QWORD PTR [rax+rdx*8]
+
+Recall that rdx (the third parameter to the handler) points to the ucontext_t described
+above. Given what we now know about the structure of ucontext_t, we can translate the first
+five lines into more understandable language:
+
+            rax = RIP;           // store the address of the encountered ud2
+            rsi = &uc_mcontext;  // rsi now points to the register list
+            rdi = RIP+2;         // rdi holds the address of the byte AFTER the ud2
+            RIP = RIP+0xe        // set RIP to the address of the NEXT ud2
+
+This last line has an important effect: by changing RIP within the ucontext_t, when control
+is passed from the handler back to normal execution, the program will continue starting 
+from this new RIP value. Thus, this last line effectively advances the program execution
+from one ud2 to the next ud2.
+
+At this point, what happens next depends entirely on the 12 bytes immediately following the
+encountered ud2 (currently pointed to by rdi). To start, the byte at rdi+8 is used as an
+index into a jump table (at address 0x203080). The table, shown below, has 50 entries:
+
+(gdb) x/50gx 0x203080
+
+0x203080:	0x0000000000001a1f	0x0000000000001a20
+0x203090:	0x0000000000001a39	0x0000000000001a52
+0x2030a0:	0x0000000000001a6c	0x0000000000001a87
+0x2030b0:	0x0000000000001aa2	0x0000000000001abe
+0x2030c0:	0x0000000000001ae6	0x0000000000001ada
+0x2030d0:	0x0000000000001afa	0x0000000000001b12
+0x2030e0:	0x0000000000001b2b	0x0000000000001b43
+0x2030f0:	0x0000000000001b5c	0x0000000000001b73
+0x203100:	0x0000000000001b8b	0x0000000000001ba3
+0x203110:	0x0000000000001bba	0x0000000000001bd2
+0x203120:	0x0000000000001be9	0x0000000000001c01
+0x203130:	0x0000000000001c1a	0x0000000000001c2e
+0x203140:	0x0000000000001c43	0x0000000000001c54
+0x203150:	0x0000000000001c6d	0x0000000000001c86
+0x203160:	0x0000000000001c9f	0x0000000000001cb3
+0x203170:	0x0000000000001cd2	0x0000000000001cf1
+0x203180:	0x0000000000001d10	0x0000000000001d2f
+0x203190:	0x0000000000001d4e	0x0000000000001d6d
+0x2031a0:	0x0000000000001d87	0x0000000000001da1
+0x2031b0:	0x0000000000001db9	0x0000000000001dcf
+0x2031c0:	0x0000000000001de5	0x0000000000001e07
+0x2031d0:	0x0000000000001e9c	0x0000000000001ebe
+0x2031e0:	0x0000000000001e1e	0x0000000000001e32
+0x2031f0:	0x0000000000001e49	0x0000000000001e60
+0x203200:	0x0000000000001e74	0x0000000000001e88
+
+
+***** An example *****
+
+To make things clearer, let's work through what happens when the first ud2 is encountered. 
+The 12 bytes immediately after the first ud2 are:
+
+    02 00 00 00 00 00 00 00 09 0d 00 00
+
+We use the ninth of these bytes (0x09) as an index into the jump table, telling us to jump
+to the function at 0x1ada, disassembled below:
+
+   0x1ada:	movzx  eax,BYTE PTR [rdi+0x9]
+   0x1ade:	mov    rdx,QWORD PTR [rdi]
+   0x1ae1:	mov    QWORD PTR [rsi+rax*8],rdx
+   0x1ae5:	ret    
+
+Given the bytes above, we can rewrite this as:
+
+            movzx  eax,0x0d
+            mov    rdx,0x02
+            mov    QWORD PTR [rsi+rax*8],rdx    # mov  RAX,0x02 
+            ret
+
+At the end of this, the handler returns, and execution is passed back to the program, with
+exactly two changes: its RIP has advanced to the next ud2, and its RAX now holds the value
+0x02.
+
+CONCLUSION: the first ud2 causes the handler to execute the instruction mov RAX,0x02.
+
+OBSERVATION: The first 8 bytes after the ud2 encoded the constant 0x02; the following byte
+(0x09) was the jump table index; the following (0x0d) was the index of RAX in our register 
+list; the final two bytes were unused in this example. One could modify this example to 
+encode other move statements. For instance, the bytes 
+
+    08 07 06 05 04 03 02 01 09 03 00 00
+
+encode the move statement mov  R11,0x0102030405060708. The right way to think about this is
+that the subroutine at 0x1ada (jump table index 09) generates move statements of the form
+mov  REG,constant.
+
+
+
+
+                             =============================
+                                 Password Verification
+                             =============================
+
+
+At this point, uncovering the underlying password verification function is all about 
+examining each function in the jump table and matching it to an assembly instruction, just
+like we matched 0x1ada to move statements in the example above. After working these out,
+you can match each ud2 to an assembly instruction, resulting in a complete password
+verification function. 
+
+It's easy to write a small python script that will disassemble the the password verification
+routine into a x64-like assembly language:
+
+
+### FILE: disassembler.py
+
+def disassemble(instructions, start_address):
+
+    prefix = ' '*20
+
+    ## This is a 50-long array containing the assembly instructions corresponding to
+    ## each entry in the jump table
+    assembly_mapping = [ 'nop',                                             # 0x1a1f
+                         'mov    {1:s}, {2:s}+{3:s}',                       # 0x1a20
+                         'mov    {1:s}, {2:s}-{3:s}',                       # 0x1a39
+
+                                      ... SNIP ...
+
+                         'mov    {1:s}, {2:s}^0x{0:x}']                     # 0x1e88
+
+    ## This is the list of register names, in the proper order
+    registers = ['r8', 'r9', 'r10', 'r11', 'r12', 'r13', 'r14', 'r15', 'rdi', 'rsi',
+                 'rbp', 'rbx', 'rdx', 'rax', 'rcx', 'rsp', 'rip']
+
+    addr = start_address
+    for inst in instructions:
+
+        ## print address of current instruction 
+        print('{:>20s}'.format('0x{:x}: '.format(addr)), end='')
+
+        ## parse the 12 bytes following the ud2
+        constant = int.from_bytes(inst[2:10], byteorder='little')
+        jump_index = inst[10]
+        reg1 = registers[inst[11]]
+        reg2 = registers[inst[12]]
+        reg3 = registers[inst[13]]
+
+        ## now disassemble the current instruction
+        print(assembly_mapping[jump_index].format(constant, reg1, reg2, reg3))
+        addr += 14
+    
+
+with open('password_verification_function', 'rb') as f:
+    function = f.read()
+
+instructions = [function[i*14:(i+1)*14] for i in range(len(function)//14)]
+disassemble(instructions, 0x1190)
+
+### end disassembler.py
+
+
+In order to run this, though, we first need a binary file containing just the password
+verification routine. As usual, gdb is magic: we can tell it to dump the memory between the
+addresses 0x1190 and 0x1946 into a file called password_verification_function.
+
+(gdb) dump binary memory password_verification_function 0x1190 0x1946
+
+Now we can run our disassembler (comments added afterwards for clarity):
+
+> python3 disassembler.py
+
+  0x1190: mov    rax, 0x2
+  0x119e: cmp    rdi, 0x2
+          setne  r8
+  0x11ac: test   r8, r8
+          retne
+  0x11ba: mov    rsi, rsi+0x8
+  0x11c8: mov    rdi, QWORD PTR [rsi+0x0]
+  0x11d6: mov    rip, 0x11e4
+  0x11e4: push   rbp
+  0x11f2: mov    rbp, rsp
+  0x1200: mov    rsp, rsp+0xfffffffffffffff0
+  0x120e: mov    QWORD PTR [rbp+0xfffffffffffffff0], rdi
+  0x121c: call   0x17da
+  0x122a: cmp    rax, 0x24
+          setne  rax
+  0x1238: test   rax, rax
+          jne    0x13ce
+  0x1246: mov    rdi, 0x20cd                                    # "FLAG{"
+  0x1254: call   0x17da
+  0x1262: mov    QWORD PTR [rbp+0xfffffffffffffff8], rax
+  0x1270: mov    rdi, QWORD PTR [rbp+0xfffffffffffffff0]
+  0x127e: mov    rsi, 0x20cd                                    # "FLAG{"
+  0x128c: mov    rdx, rax
+  0x129a: call   0x182e
+  0x12a8: test   rax, rax
+          jne    0x13ce
+  0x12b6: mov    rdi, QWORD PTR [rbp+0xfffffffffffffff0]
+  0x12c4: movzx  rsi, BYTE PTR [rdi+0x23]
+  0x12d2: cmp    rsi, 0x7d                                      # '}'
+          setne  rsi
+  0x12e0: test   rsi, rsi
+          jne    0x13ce
+  0x12ee: mov    rsi, QWORD PTR [rbp+0xfffffffffffffff8]
+  0x12fc: mov    rdi, rdi+rsi
+  0x130a: mov    rsi, -rsi
+  0x1318: mov    rsi, rsi+0x23
+  0x1326: push   rsi
+  0x1334: call   0x1406
+  0x1342: pop    rsi
+  0x1350: test   rax, rax
+          je     0x13ce
+  0x135e: mov    rdi, rax
+  0x136c: push   rdi
+  0x137a: call   0x15fe
+  0x1388: pop    rdi
+  0x1396: push   rax
+  0x13a4: call   0x0                                            # free
+  0x13b2: pop    rax
+  0x13c0: mov    rip, 0x13dc
+  0x13ce: mov    rax, 0x1
+  0x13dc: mov    rsp, rbp
+  0x13ea: pop    rbp
+  0x13f8: ret
+  0x1406: mov    rax, 0x0
+  0x1414: test   rsi, rsi
+          rete
+  0x1422: push   rdi
+  0x1430: push   rsi
+  0x143e: mov    rdi, rsi<<0x3
+  0x144c: call   0x0                                            # malloc
+  0x145a: pop    rsi
+  0x1468: pop    rdi
+  0x1476: test   rax, rax
+          rete
+  0x1484: mov    r8, rax
+  0x1492: mov    r9, rax
+  0x14a0: push   r9
+  0x14ae: push   r8
+  0x14bc: push   rdi
+  0x14ca: push   rsi
+  0x14d8: movzx  rsi, BYTE PTR [rdi+0x0]
+  0x14e6: mov    rdi, 0x20a0               # "abdfgehikmanoqrstucvwlxyz-01h23p456u78j9-_.+"
+  0x14f4: call   0x18c8
+  0x1502: pop    rsi
+  0x1510: pop    rdi
+  0x151e: pop    r8
+  0x152c: pop    r9
+  0x153a: test   rax, rax
+          je     0x15c6
+  0x1548: mov    r10, 0x20a0               # "abdfgehikmanoqrstucvwlxyz-01h23p456u78j9-_.+"
+  0x1556: mov    rax, rax-r10
+  0x1564: mov    QWORD PTR [r9+0x0], rax
+  0x1572: mov    r9, r9+0x8
+  0x1580: mov    rdi, rdi+0x1
+  0x158e: mov    rsi, rsi+0xffffffffffffffff
+  0x159c: test   rsi, rsi
+          jne    0x14a0
+  0x15aa: mov    rax, r8
+  0x15b8: ret
+  0x15c6: mov    rdi, r8
+  0x15d4: call   0x0                                            # free
+  0x15e2: mov    rax, 0x0
+  0x15f0: ret
+  0x15fe: mov    rax, 0x1
+  0x160c: test   rsi, rsi
+          rete
+  0x161a: mov    r8, QWORD PTR [rdi+0x0]
+  0x1628: cmp    r8, 0x16
+          setne  r8
+  0x1636: test   r8, r8
+          retne
+  0x1644: push   rdi
+  0x1652: push   rsi
+  0x1660: call   0x1724
+  0x166e: pop    rsi
+  0x167c: pop    rdi
+  0x168a: mov    rsi, rsi+0xffffffffffffffff
+  0x1698: push   rdi
+  0x16a6: mov    rdx, rsi<<0x3
+  0x16b4: mov    rsi, 0x1fa0              # constant data buffer consisting of 29 quadwords 
+  0x16c2: call   0x182e
+  0x16d0: pop    rdi
+  0x16de: mov    r8, rax
+  0x16ec: mov    rax, 0x1
+  0x16fa: test   r8, r8
+          retne
+  0x1708: mov    rax, 0x0
+  0x1716: ret
+  0x1724: test   rsi, rsi
+          rete
+  0x1732: mov    rsi, rsi+0xffffffffffffffff
+  0x1740: test   rsi, rsi
+          rete
+  0x174e: mov    r8, QWORD PTR [rdi+0x0]
+  0x175c: mov    r9, QWORD PTR [rdi+0x8]
+  0x176a: mov    r8, r9-r8
+  0x1778: mov    r8, r8^rsi
+  0x1786: mov    r9, r8*r8
+  0x1794: mov    r8, r9*r8
+  0x17a2: mov    QWORD PTR [rdi+0x0], r8
+  0x17b0: mov    rdi, rdi+0x8
+  0x17be: mov    rsi, rsi+0xffffffffffffffff
+  0x17cc: mov    rip, 0x1740
+  0x17da: mov    rax, 0x0
+  0x17e8: movzx  r10, BYTE PTR [rdi+0x0]
+  0x17f6: test   r10, r10
+          rete
+  0x1804: mov    rdi, rdi+0x1
+  0x1812: mov    rax, rax+0x1
+  0x1820: mov    rip, 0x17e8
+  0x182e: mov    rax, 0x0
+  0x183c: test   rdx, rdx
+          rete
+  0x184a: movzx  r8, BYTE PTR [rdi+0x0]
+  0x1858: movzx  r9, BYTE PTR [rsi+0x0]
+  0x1866: mov    r8, r8^r9
+  0x1874: mov    rax, rax|r8
+  0x1882: mov    rdx, rdx+0xffffffffffffffff
+  0x1890: mov    rdi, rdi+0x1
+  0x189e: mov    rsi, rsi+0x1
+  0x18ac: test   rdx, rdx
+          jne    0x184a
+  0x18ba: ret
+  0x18c8: mov    rax, rdi
+  0x18d6: movzx  r8, BYTE PTR [rax+0x0]
+  0x18e4: test   r8, r8
+          je     0x192a
+  0x18f2: cmp    r8, rsi
+          sete   r8
+  0x1900: test   r8, r8
+          retne
+  0x190e: mov    rax, rax+0x1
+  0x191c: mov    rip, 0x18d6
+  0x192a: mov    rax, 0x0
+  0x1938: ret
+
+
+
+Reversing this gives high-level code equivalent to the following.
+
+
+
+int password_verification(int argc, char **argv)
+{
+    if (argc != 2)
+        return 2;       // error code for incorrect usage
+
+    char *password = argv[1];
+
+    if (strlen(password) != 36)
+        return 1;       // error code for incorrect password
+
+    int length = strlen( "FLAG{" );
+    if (memcmp(password, "FLAG{", length))
+        return 1;       // password must start with "FLAG{"
+    if (password[35] != '}')
+        return 1;       // password must end with '}'
+
+    int64_t *indices = get_indices_in_reference_string(password+length, 35-length);
+    if (!indices)
+        return 1;       // all characters between "FLAG{" and '}' must belong to
+                        // reference string; indices holds the indices of each
+                        // character within the reference string
+
+    int result = verify_indices(indices, 35-length);
+    free(indices);
+    return result;
+}
+
+
+int64_t * get_indices_in_reference_string(char *str, int length)
+{
+    if (length == 0)
+        return NULL;
+    const char reference_string[] = "abdfgehikmanoqrstucvwlxyz-01h23p456u78j9-_.+";
+    int64_t *buffer = malloc(8*length);
+    if (!buffer)
+        return NULL;
+    
+    for (int i = 0; i < length; i++) {
+        char *pc = strchr(reference_string, str[i]);
+        if (!pc) {
+            free(buffer);
+            return NULL;
+        } 
+        buffer[i] = pc - reference_string;
+    }
+    return buffer;
+}
+
+
+int verify_indices(uint64_t *indices, int length)
+{
+    if (length == 0)
+        return 1;       // incorrect password
+    if (indices[0] != 22)
+        return 1;       // first character must be 'x'
+    
+    // hash password
+    for (int i = 0; i < length - 1; i++) {
+        int64_t temp = (indices[i+1]-indices[i]) ^ ((uint64_t) (length - i - 1));
+        indices[i] = temp * temp * temp;
+    }
+
+    // read from memory at address 0x1fa0
+    const int64_t data_buffer[29] = {5832, -29791, -8000, 13824, -6859, 5832, -29791,
+                                     24389, -10648, -8, 24389, -13824, -17576, 2744,
+                                     -17576, 19683, -32768, 729, 19683, -1, 729, 1000,
+                                     125, -5832, 512, 512, -6859, 8000, -8000};
+
+    // compare hashed password to the data_buffer
+    if (memcmp(indices, data_buffer, length-1))
+        return 1;       // hash didn't match data buffer
+    else
+        return 0;       // hash matched data buffer, successful password.
+}
+
+
+
+
+                             =============================
+                                  Password Generation
+                             =============================
+
+
+We now know the password must start with "FLAG{", end in "}", and between are 30 characters
+which we can determine if we figure out their indices within the fixed reference string
+"abdfgehikmanoqrstucvwlxyz-01h23p456u78j9-_.+". To get these indices, we simply have to 
+invert the password hashing function we derived above. The following code does the trick.
+
+// FILE: keygen.c
+
+#include <stdio.h>
+#include <stdint.h>
+
+int main()
+{
+    char reference_string[] = "abdfgehikmanoqrstucvwlxyz-01h23p456u78j9-_.+";
+    int64_t data_buffer[] = { 5832, -29791, -8000, 13824, -6859, 5832, -29791,
+                              24389, -10648, -8, 24389, -13824, -17576, 2744,
+                              -17576, 19683, -32768, 729, 19683, -1, 729, 1000,
+                              125, -5832, 512, 512, -6859, 8000, -8000};
+    int64_t indices[30];
+    indices[0] = 22;
+    for (int i = 0; i < 29; i++) {
+        int64_t j;
+        for (j = -43; j <= 43; j++)
+            if (data_buffer[i] == j*j*j)
+                break;
+        indices[i+1] = indices[i] + (j ^ ((int64_t)(29-i)));    
+    }
+    printf("FLAG{");
+    for (int i = 0; i < 30; i++)
+        printf("%c", reference_string[indices[i]]);
+    printf("}\n");
+    return 0;
+}
+
+// end keygen.c
+
+
+> gcc keygen.c -o keygen
+> ./keygen
+FLAG{x86-1s-s0-fund4m3nt4lly-br0k3n}
+> ./hell86 FLAG{x86-1s-s0-fund4m3nt4lly-br0k3n}
+OK!
+
+==================================================
+  Solution: FLAG{x86-1s-s0-fund4m3nt4lly-br0k3n}
+==================================================
+
+
+
+============
+  ADDENDUM
+============
+
+For completeness, I've included the complete (unsnipped) disassembler.py below.
+
+### FILE: disassembler.py
+
+def disassemble(instructions, start_address):
+
+    prefix = ' '*20
+
+    ## This is a 50-long array containing the assembly instructions corresponding to
+    ## each entry in the jump table
+    assembly_mapping = [ 'nop',                                                 # 0x1a1f
+                         'mov    {1:s}, {2:s}+{3:s}',                           # 0x1a20
+                         'mov    {1:s}, {2:s}-{3:s}',                           # 0x1a39
+                         'mov    {1:s}, {2:s}*{3:s}',                           # 0x1a52
+                         'mov    {1:s}, {2:s}/{3:s}',                           # 0x1a6c
+                         'mov    {1:s}, {2:s}%{3:s}',                           # 0x1a87
+                         'mov    {1:s}, {2:s}<<{3:s}',                          # 0x1aa2
+                         'mov    {1:s}, {2:s}>>{3:s}',                          # 0x1abe
+                         'mov    {1:s}, -{2:s}',                                # 0x1ae6
+                         'mov    {1:s}, 0x{0:x}',                               # 0x1ada
+                         'movzx  {1:s}, BYTE PTR [{2:s}+0x{0:x}]',              # 0x1afa
+                         'movsx  {1:s}, BYTE PTR [{2:s}+0x{0:x}]',              # 0x1b12
+                         'movzx  {1:s}, WORD PTR [{2:s}+0x{0:x}]',              # 0x1b2b
+                         'movsx  {1:s}, WORD PTR [{2:s}+0x{0:x}]',              # 0x1b43
+                         'movzx  {1:s}, DWORD PTR [{2:s}+0x{0:x}]',             # 0x1b5c
+                         'movsx  {1:s}, DWORD PTR [{2:s}+0x{0:x}]',             # 0x1b73
+                         'mov    {1:s}, QWORD PTR [{2:s}+0x{0:x}]',             # 0x1b8b
+                         'mov    BYTE PTR [{2:s}+0x{0:x}], {3:s}',              # 0x1ba3
+                         'mov    WORD PTR [{2:s}+0x{0:x}], {3:s}',              # 0x1bba
+                         'mov    DWORD PTR [{2:s}+0x{0:x}], {3:s}',             # 0x1bd2
+                         'mov    QWORD PTR [{2:s}+0x{0:x}], {3:s}',             # 0x1be9
+                         'push   {2:s}',                                        # 0x1c01
+                         'push   0x{0:x}',                                      # 0x1c1a
+                         'pop    {1:s}',                                        # 0x1c2e
+                         'mov    {1:s}, {2:s}',                                 # 0x1c43
+                         'mov    {1:s}, {2:s}|{3:s}',                           # 0x1c54
+                         'mov    {1:s}, {2:s}&{3:s}',                           # 0x1c6d
+                         'mov    {1:s}, {2:s}^{3:s}',                           # 0x1c86
+                         'mov    {1:s}, ~{2:s}',                                # 0x1c9f
+                         'cmp    {2:s}, {3:s}\n' + prefix + 'setl   {1:s}',     # 0x1cb3
+                         'cmp    {2:s}, {3:s}\n' + prefix + 'setle  {1:s}',     # 0x1cd2
+                         'cmp    {2:s}, {3:s}\n' + prefix + 'setg   {1:s}',     # 0x1cf1
+                         'cmp    {2:s}, {3:s}\n' + prefix + 'setge  {1:s}',     # 0x1d10
+                         'cmp    {2:s}, {3:s}\n' + prefix + 'sete   {1:s}',     # 0x1d2f
+                         'cmp    {2:s}, {3:s}\n' + prefix + 'setne  {1:s}',     # 0x1d4e
+                         'cmp    {2:s}, 0x{0:x}\n' + prefix + 'sete   {1:s}',   # 0x1d6d
+                         'cmp    {2:s}, 0x{0:x}\n' + prefix + 'setne  {1:s}',   # 0x1d87
+                         'test   {2:s}, {2:s}\n' + prefix + 'sete   {1:s}',     # 0x1da1
+                         'test   {2:s}, {2:s}\n' + prefix + 'je     0x{0:x}',   # 0x1db9
+                         'test   {2:s}, {2:s}\n' + prefix + 'jne    0x{0:x}',   # 0x1dcf
+                         'call   0x{0:x}',                                      # 0x1de5
+                         'ret',                                                 # 0x1e07
+                         'test   {2:s}, {2:s}\n' + prefix + 'retne',            # 0x1e9c
+                         'test   {2:s}, {2:s}\n' + prefix + 'rete',             # 0x1ebe
+                         'mov    {1:s}, {2:s}+0x{0:x}',                         # 0x1e1e
+                         'mov    {1:s}, {2:s}>>0x{0:x}',                        # 0x1e32
+                         'mov    {1:s}, {2:s}<<0x{0:x}',                        # 0x1e49
+                         'mov    {1:s}, {2:s}|0x{0:x}',                         # 0x1e60
+                         'mov    {1:s}, {2:s}&0x{0:x}',                         # 0x1e74
+                         'mov    {1:s}, {2:s}^0x{0:x}']                         # 0x1e88
+
+    ## This is the list of register names, in the proper order
+    registers = ['r8', 'r9', 'r10', 'r11', 'r12', 'r13', 'r14', 'r15', 'rdi', 'rsi',
+                 'rbp', 'rbx', 'rdx', 'rax', 'rcx', 'rsp', 'rip']
+
+    addr = start_address
+    for inst in instructions:
+
+        ## print address of current instruction 
+        print('{:>20s}'.format('0x{:x}: '.format(addr)), end='')
+
+        ## parse the 12 bytes following the ud2
+        constant = int.from_bytes(inst[2:10], byteorder='little')
+        jump_index = inst[10]
+        reg1 = registers[inst[11]]
+        reg2 = registers[inst[12]]
+        reg3 = registers[inst[13]]
+
+        ## now disassemble the current instruction
+        print(assembly_mapping[jump_index].format(constant, reg1, reg2, reg3))
+        addr += 14
+    
+
+with open('password_verification_function', 'rb') as f:
+    function = f.read()
+
+instructions = [function[i*14:(i+1)*14] for i in range(len(function)//14)]
+disassemble(instructions, 0x1190)
+
+### end disassembler.py
