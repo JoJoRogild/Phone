@@ -1,0 +1,10 @@
+get infor reverse engineering is a program to give basic reverse engineering information to start reverse engineering faster.
+
+this is a early version of a man page so there is a LOT of erros
+
+-all to get all information
+-main to get a answer of were the program thinks the main functions is
+-header analyze the header for information
+--help to show tags
+
+
