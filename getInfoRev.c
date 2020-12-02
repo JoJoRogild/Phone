@@ -13,9 +13,6 @@ int cfileexists(const char * filename){
 }
 
 int main(int argc, char *argv[]){
-
- printf("idk %d",strncmp("idk", "idk", 3));
-
  printf("this program can check which programming language and stuff all the simple information in a program an put it out in a very readable format\nSyntax: getInfoRev \"flag\" \"file\"\n");
  if (argc == 1){printf("you need to specify a program. DICKHEAD\n");}
  else if (argc == 2){
