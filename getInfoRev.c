@@ -1,5 +1,6 @@
 #include <stdio.h>
 
+char* help = "-all to get all information\n-main to get a answer of were the program thinks the main functions is\n-header analyze the header for information\n--help to show tags\n";
 char flags[4][10] = {"-A", "-main", "-header", "--help"};
 int whichOne = -1;
 
@@ -24,15 +25,23 @@ int main(int argc, char *argv[]){
   }
  }
  else if (argc == 3){
-  if(cfileexists(argv[2]) == 0){
-   printf("the file you specified does not exists\n");
+  for (int i = 0; i < 4; i++){
+   if(argv[1][1] - flags[i][1] + argv[1][0] - flags[i][0] == 0){whichOne = i;}
+  }
+  if (whichOne == 3){
+   printf("\n\n%s", help);
+  }
+  else if (whichOne == 2){
+   printf("analysing the header\n");
+  }
+  else if (whichOne == 1){
+   printf("finding the main function\n");
+  }
+  else if(whichOne == 0){
+   printf("analysing everything\n");
   }
   else{
-   for (int i = 0; i < 5; i++){
-    if(i > 3){printf("the flag you have specified does not exists. use --help for getting imformation\n");return 0;}
-    else if(strncmp(argv[1], flags[i], 2) == 0){whichOne == i;}
-   }
-   printf("the file you have specified is: %s  the flag you have specified is: %d\n", argv[2], whichOne);
+   printf("the flag you have specified does not exists");
   }
  }
 }
